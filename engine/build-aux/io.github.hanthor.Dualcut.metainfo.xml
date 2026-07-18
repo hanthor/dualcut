@@ -41,6 +41,11 @@
     <color type="primary" scheme_preference="dark">#2a3350</color>
   </branding>
   <releases>
+    <release version="0.3.0" date="2026-07-18">
+      <description>
+        <p>In-app agent API and script panel, agent skill, thumbnails, multi-select, scripting in the Flatpak.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-07-18">
       <description>
         <p>
