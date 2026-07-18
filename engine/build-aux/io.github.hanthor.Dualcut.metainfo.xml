@@ -41,6 +41,11 @@
     <color type="primary" scheme_preference="dark">#2a3350</color>
   </branding>
   <releases>
+    <release version="0.4.0" date="2026-07-18">
+      <description>
+        <p>Timeline drag with snapping, scene reorder, waveforms, animation editor, export dialog, save-as-template, native-first README.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-07-18">
       <description>
         <p>In-app agent API and script panel, agent skill, thumbnails, multi-select, scripting in the Flatpak.</p>
