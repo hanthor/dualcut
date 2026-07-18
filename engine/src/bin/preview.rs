@@ -743,12 +743,14 @@ impl Editor {
         anim_head.set_margin_top(8);
         form.append(&anim_head);
 
-        const PROPS: [&str; 3] = ["x", "y", "opacity"];
+        const PROPS: [&str; 5] = ["x", "y", "width", "height", "opacity"];
         const EASINGS: [&str; 4] = ["linear", "easeIn", "easeOut", "easeInOut"];
         let prop_of = |a: &document::AnimProperty| match a {
             document::AnimProperty::X => 0,
             document::AnimProperty::Y => 1,
-            document::AnimProperty::Opacity => 2,
+            document::AnimProperty::Width => 2,
+            document::AnimProperty::Height => 3,
+            document::AnimProperty::Opacity => 4,
         };
         let ease_of = |e: &document::Easing| match e {
             document::Easing::Linear => 0,
@@ -782,6 +784,8 @@ impl Editor {
                     let value = match dd.selected() {
                         0 => document::AnimProperty::X,
                         1 => document::AnimProperty::Y,
+                        2 => document::AnimProperty::Width,
+                        3 => document::AnimProperty::Height,
                         _ => document::AnimProperty::Opacity,
                     };
                     commit(Box::new(move |a| a.property = value));
