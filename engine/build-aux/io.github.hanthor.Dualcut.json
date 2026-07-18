@@ -1,0 +1,49 @@
+{
+  "//": "Starter Flatpak manifest — the deliverable is a Flatpak (GNOME/libadwaita app).",
+  "//2": "Before first build: generate cargo-sources.json with flatpak-cargo-generator ",
+  "//3": "(https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo) and verify",
+  "//4": "whether the GNOME runtime's GStreamer ships GES; if not, add a gst-editing-services module.",
+  "id": "io.github.hanthor.Dualcut",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "48",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "dualcut",
+  "finish-args": [
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",
+    "--device=dri",
+    "--share=ipc",
+    "--filesystem=xdg-videos:ro",
+    "--filesystem=xdg-pictures:ro",
+    "--filesystem=xdg-music:ro"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {
+      "CARGO_HOME": "/run/build/dualcut/cargo"
+    }
+  },
+  "modules": [
+    {
+      "name": "dualcut",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cargo --offline build --release --features preview,scripting,vector",
+        "install -Dm755 target/release/preview /app/bin/dualcut"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": ".."
+        },
+        {
+          "type": "file",
+          "path": "cargo-sources.json",
+          "//": "generate with flatpak-cargo-generator ../Cargo.lock -o cargo-sources.json"
+        }
+      ]
+    }
+  ]
+}

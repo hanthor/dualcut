@@ -11,6 +11,8 @@ media off the DOM entirely.
 - **Implementation language: Rust** (rationale below).
 - **Scripting: TypeScript first**, but the scripting surface is a stable
   document + API boundary, so other languages can drive the editor too.
+- **This is a GNOME app**: GTK4 + libadwaita, GNOME HIG. **The deliverable
+  is a Flatpak** (starter manifest: `engine/build-aux/io.github.hanthor.Dualcut.json`).
 
 ## Why Rust (ecosystem survey)
 
@@ -86,12 +88,20 @@ Project
   window, render to MP4. Proves decode→timeline→display→export before any
   editor code. Also: Vello-to-GL-texture-into-GES proof, and a
   deno_core "hello editor API" embed.
-  *Status: `engine/` crate landed — GES timeline (test source + URI clip +
-  transparent title) renders to H.264/AAC MP4 headless (`cargo run --bin
-  render`), and the GTK4 preview window with gtk4paintablesink builds and
-  launches (`cargo run --features preview --bin preview`, verified under
-  Xvfb; GPU frame display pending a real desktop session). Remaining:
-  Vello texture source, deno_core embed.*
+  *Status: **complete** (2026-07-18), all four pillars proven in `engine/`:
+  (1) GES timeline (test source + URI clip + transparent title) renders to
+  H.264/AAC MP4 headless — `cargo run --bin render`, verified by frame
+  extraction; (2) GTK4/libadwaita preview window with gtk4paintablesink
+  builds and launches — `cargo run --features preview --bin preview`
+  (smoke-tested under Xvfb; GPU frame display still to be eyeballed on a
+  real desktop session); (3) in-process TypeScript via rustyscript/deno_core
+  drives an `editor.addClip()` API and renders its own MP4 — `cargo run
+  --features scripting --bin script`; (4) Vello 0.9 renders the shape set
+  (rounded rect, circle, star) headless on wgpu/Vulkan — `cargo run
+  --features vector --bin vello_spike`. Note: GES objects are not Send —
+  scripting ops collect document mutations, applied on the engine thread
+  (this is the right M1 architecture anyway: scripts edit the document, not
+  GES). Vello-texture→GES source integration moved to M3.*
 - **M1 — Engine + document.** Document model v2 (serde), document⇄GES
   mapping layer, undo/redo as document diffs, autosave, the HTTP agent API
   (port the v0 contract + AGENTS.md).
@@ -108,12 +118,19 @@ Project
 - **M6 — Export & polish.** Render queue (GES render profiles: MP4/WebM,
   resolution/bitrate presets), audio gain/fades, waveforms + thumbnails on
   clips, snapping, multi-select.
+- **M7 — Flatpak & Flathub.** The shipping artifact: finish the manifest
+  (GNOME 48 runtime, rust-stable SDK extension, `flatpak-cargo-generator`
+  offline sources, GES module if the runtime lacks it), portals for media
+  access (no broad filesystem holes), appstream metainfo + screenshots,
+  Flathub submission under KiKaraage/hanthor.
 
 ## Open questions
 
 1. Scene *audio*: does a video clip's own audio belong to the scene while
    music is an overlay? (Proposed: yes — scene-local audio + overlay audio.)
-2. Vello alpha risk — decide Vello vs `skia-safe` at M0 with real numbers.
+2. Vello alpha risk — spike passed (0.9 renders the shape set headless on
+   llvmpipe); final Vello vs `skia-safe` call once M3 measures real scenes
+   on real GPUs.
 3. Name: Chop / Clip / **Compose** / Frame / Collect / Pack — pending.
 4. Does v0 (web) stay maintained as a thin remote UI, or freeze as
    reference once M2 reaches parity?
