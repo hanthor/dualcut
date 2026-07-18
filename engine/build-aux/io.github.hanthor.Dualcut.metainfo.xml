@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.hanthor.Dualcut</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Dualcut</name>
+  <summary>Edit videos by timeline or by code</summary>
+  <description>
+    <p>
+      Dualcut is a video editor with dual usage: edit manually on a
+      scene-based timeline, or programmatically through a live JSON project
+      document that scripts and AI agents can edit while the app is open —
+      both surfaces stay in sync.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Scene-based editing with overlay tracks that cross scene cuts</li>
+      <li>Reusable parameterised compositions (lower thirds, title cards)</li>
+      <li>Text, video, audio, and image clips with tweened animations</li>
+      <li>GPU-accelerated preview and GStreamer-powered MP4 export</li>
+      <li>Agent-editable project files with live reload</li>
+    </ul>
+  </description>
+  <developer id="io.github.kikaraage">
+    <name>KiKaraage</name>
+  </developer>
+  <launchable type="desktop-id">io.github.hanthor.Dualcut.desktop</launchable>
+  <url type="homepage">https://github.com/hanthor/dualcut</url>
+  <url type="bugtracker">https://github.com/hanthor/dualcut/issues</url>
+  <url type="vcs-browser">https://github.com/hanthor/dualcut</url>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <branding>
+    <color type="primary" scheme_preference="light">#8ea2ff</color>
+    <color type="primary" scheme_preference="dark">#2a3350</color>
+  </branding>
+  <releases>
+    <release version="0.1.0" date="2026-07-18">
+      <description>
+        <p>
+          First release: GES-based engine with scene/overlay/template
+          document model, agent HTTP API, libadwaita preview app with live
+          reload, and headless rendering.
+        </p>
+      </description>
+    </release>
+  </releases>
+</component>

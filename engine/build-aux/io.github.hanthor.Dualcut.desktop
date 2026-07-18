@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Dualcut
+Comment=Edit videos by timeline or by code
+Exec=dualcut %f
+Icon=io.github.hanthor.Dualcut
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;AudioVideoEditing;GNOME;GTK;
+Keywords=video;editor;timeline;programmatic;agent;
+MimeType=application/json;
+StartupNotify=true

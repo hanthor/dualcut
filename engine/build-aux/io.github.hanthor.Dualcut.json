@@ -1,5 +1,5 @@
 {
-  "//": "Flatpak manifest — the deliverable. Built in CI by .github/workflows/flatpak.yml,",
+  "//": "Flatpak manifest \u2014 the deliverable. Built in CI by .github/workflows/flatpak.yml,",
   "//2": "which generates cargo-sources.json with flatpak-cargo-generator before building.",
   "//3": "Ships the preview feature only for now; scripting (V8) needs an offline",
   "//4": "RUSTY_V8_ARCHIVE source and joins the bundle at M4.",
@@ -7,7 +7,9 @@
   "runtime": "org.gnome.Platform",
   "runtime-version": "50",
   "sdk": "org.gnome.Sdk",
-  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
   "command": "dualcut",
   "finish-args": [
     "--socket=wayland",
@@ -50,7 +52,10 @@
       "buildsystem": "simple",
       "build-commands": [
         "cargo --offline build --release --features preview --bin preview",
-        "install -Dm755 target/release/preview /app/bin/dualcut"
+        "install -Dm755 target/release/preview /app/bin/dualcut",
+        "install -Dm644 build-aux/io.github.hanthor.Dualcut.desktop /app/share/applications/io.github.hanthor.Dualcut.desktop",
+        "install -Dm644 build-aux/io.github.hanthor.Dualcut.metainfo.xml /app/share/metainfo/io.github.hanthor.Dualcut.metainfo.xml",
+        "install -Dm644 build-aux/io.github.hanthor.Dualcut.svg /app/share/icons/hicolor/scalable/apps/io.github.hanthor.Dualcut.svg"
       ],
       "sources": [
         {
