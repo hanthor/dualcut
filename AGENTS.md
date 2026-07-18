@@ -101,3 +101,57 @@ easing `"spring"`.
 
 Title card sequence: one track, consecutive text clips (`start` of each =
 previous `start + duration`), each with a fade-in and fade-out.
+
+---
+
+# Native engine (M1+): project documents
+
+The Rust engine in `engine/` uses document model v2 — **scenes** (sequential
+narrative spine) + **overlays** (tracks crossing scene cuts) + **defs**
+(reusable parameterised compositions). Full types: `engine/src/document.rs`.
+
+## Editing surfaces
+
+1. **File**: edit the project JSON (e.g. `engine/examples/demo-project.json`).
+2. **HTTP** (while `cargo run --bin serve -- <project.json> [port]` runs,
+   default port 7357):
+   - `GET  /project` — current document
+   - `POST /project` — replace document (validated, saved to disk)
+   - `POST /render` — `{"out": "path.mp4"}` renders and reports warnings
+   - `GET  /status` — engine info
+3. **CLI render**: `cargo run --bin render -- <project.json> <out.mp4>`
+
+## Schema summary
+
+```jsonc
+{
+  "meta": { "title": "…", "width": 1280, "height": 720, "fps": 30 },
+  "defs": {
+    "lower-third": {
+      "params": ["name", "role"],
+      "layers": [ /* clips; "{name}" etc. substituted at instantiation */ ]
+    }
+  },
+  "scenes": [               // sequential, no gaps; order = time
+    { "id": "s1", "duration": 3, "layers": [ /* clips, start relative to scene */ ] }
+  ],
+  "overlays": [             // absolute timing, cross scene cuts freely
+    { "id": "o1", "clips": [ /* subtitles, music, watermarks */ ] }
+  ]
+}
+```
+
+Clip: `{ id, start, duration, type, …element fields, transform?, animations? }`
+- `type`: `text` (text/font/color) · `video`/`audio` (src/offset/volume) ·
+  `image` (src) · `shape` (M3, skipped with warning for now) ·
+  `compref` (ref + args) · `test`
+- `transform`: `{ x, y, width, height, opacity }` pixels; 0 = natural
+- animations: `{ property: x|y|opacity, from, to, start, end, easing }`,
+  times relative to the clip; easing: linear|easeIn|easeOut|easeInOut
+- `duration: 0` on a scene layer = fill the rest of the scene
+
+Rules: unique ids everywhere; scenes need `duration > 0`; `compref` targets
+must exist in `defs`; defs cannot (yet) reference other defs. Audio policy:
+a video clip's own audio is scene-local; music/VO belongs on overlays.
+"Detach audio" = set the video clip's `volume: 0` and add an `audio` clip
+with the same `src`/`offset` wherever you want it.

@@ -627,6 +627,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "chunked_transfer"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
+
+[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1249,6 +1255,7 @@ dependencies = [
  "anyhow",
  "gst-plugin-gtk4",
  "gstreamer",
+ "gstreamer-controller",
  "gstreamer-editing-services",
  "gstreamer-pbutils",
  "gtk4",
@@ -1258,6 +1265,7 @@ dependencies = [
  "rustyscript",
  "serde",
  "serde_json",
+ "tiny_http",
  "vello",
 ]
 
@@ -2123,6 +2131,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "gstreamer-controller"
+version = "0.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d8c72be029c50abb50fed29e83105364b5cbcdb48c4fbf608826cd69d31458d"
+dependencies = [
+ "glib",
+ "gstreamer",
+ "gstreamer-controller-sys",
+]
+
+[[package]]
+name = "gstreamer-controller-sys"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87b501e658c8fafa405242d905cc1de2c1e793283014819ed33ec06219fbaf01"
+dependencies = [
+ "glib-sys",
+ "gobject-sys",
+ "gstreamer-sys",
+ "libc",
+ "pkg-config",
+ "system-deps",
+]
+
+[[package]]
 name = "gstreamer-editing-services"
 version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2436,6 +2469,12 @@ dependencies = [
  "rustc-hash 2.1.3",
  "triomphe",
 ]
+
+[[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "iana-time-zone"
@@ -4989,6 +5028,18 @@ dependencies = [
  "quick-error",
  "weezl",
  "zune-jpeg",
+]
+
+[[package]]
+name = "tiny_http"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
+dependencies = [
+ "ascii",
+ "chunked_transfer",
+ "httpdate",
+ "log",
 ]
 
 [[package]]

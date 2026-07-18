@@ -1,21 +1,46 @@
-//! Headless GES render: build the demo timeline, encode to MP4.
+//! Headless GES render.
 //!
-//! Usage: render <output.mp4> [input-media-uri]
+//! Usage:
+//!   render <project.json> <output.mp4>     render a document (M1 path)
+//!   render <output.mp4> [media-uri]        render the built-in M0 demo
 
 use anyhow::{Context, Result};
 use dualcut_engine::{build_demo_timeline, init, mp4_profile, run_to_eos};
-use gstreamer as gst;
+use dualcut_engine::{document::Project, mapping};
 use ges::prelude::*;
+use gstreamer as gst;
 use gstreamer_editing_services as ges;
 
 fn main() -> Result<()> {
     init()?;
 
     let mut args = std::env::args().skip(1);
-    let out = args.next().unwrap_or_else(|| "out.mp4".into());
-    let media_uri = args.next();
+    let first = args.next().unwrap_or_else(|| "out.mp4".into());
 
-    let timeline = build_demo_timeline(media_uri.as_deref())?;
+    let (timeline, out) = if first.ends_with(".json") {
+        let out = args.next().unwrap_or_else(|| "out.mp4".into());
+        let json = std::fs::read_to_string(&first).with_context(|| format!("reading {first}"))?;
+        let project = Project::from_json(&json)?;
+        let base_dir = std::path::Path::new(&first)
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
+        let compiled = mapping::compile(&project, &base_dir)?;
+        for warning in &compiled.warnings {
+            eprintln!("warning: {warning}");
+        }
+        println!(
+            "project {:?}: {} scene(s), {} overlay track(s), {:.1}s",
+            project.meta.title,
+            project.scenes.len(),
+            project.overlays.len(),
+            project.duration()
+        );
+        (compiled.timeline, out)
+    } else {
+        let media_uri = args.next();
+        (build_demo_timeline(media_uri.as_deref())?, first)
+    };
 
     let pipeline = ges::Pipeline::new();
     pipeline.set_timeline(&timeline).context("attaching timeline")?;
@@ -29,7 +54,7 @@ fn main() -> Result<()> {
         .set_mode(ges::PipelineFlags::RENDER)
         .context("setting render mode")?;
 
-    println!("rendering timeline -> {}", out_abs.display());
+    println!("rendering -> {}", out_abs.display());
     let start = std::time::Instant::now();
     run_to_eos(&pipeline)?;
     println!("done in {:.1?}", start.elapsed());

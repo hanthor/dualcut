@@ -12,6 +12,9 @@ use gst::prelude::*;
 use gstreamer_pbutils as gst_pbutils;
 use gstreamer_editing_services as ges;
 
+pub mod document;
+pub mod mapping;
+
 pub fn init() -> Result<()> {
     gst::init().context("initializing GStreamer")?;
     ges::init().context("initializing GES")?;

@@ -1,0 +1,169 @@
+{
+  "meta": {
+    "title": "M1 demo",
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "defs": {
+    "lower-third": {
+      "params": [
+        "name",
+        "role"
+      ],
+      "layers": [
+        {
+          "id": "lt-name",
+          "start": 0.0,
+          "duration": 0.0,
+          "type": "text",
+          "text": "{name} — {role}",
+          "font": "Sans Bold 24",
+          "color": "#ffffff",
+          "transform": {
+            "x": 80.0,
+            "y": 600.0,
+            "width": 0.0,
+            "height": 0.0,
+            "opacity": 1.0
+          },
+          "animations": [
+            {
+              "property": "opacity",
+              "from": 0.0,
+              "to": 1.0,
+              "start": 0.0,
+              "end": 0.4,
+              "easing": "easeOut"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene-intro",
+      "name": "Intro",
+      "duration": 3.0,
+      "layers": [
+        {
+          "id": "intro-title",
+          "start": 0.4,
+          "duration": 2.4,
+          "type": "text",
+          "text": "Edited via agent API",
+          "font": "Sans Bold 48",
+          "color": "#8ea2ff",
+          "transform": {
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "opacity": 1.0
+          },
+          "animations": [
+            {
+              "property": "opacity",
+              "from": 0.0,
+              "to": 1.0,
+              "start": 0.0,
+              "end": 0.5,
+              "easing": "easeOut"
+            },
+            {
+              "property": "opacity",
+              "from": 1.0,
+              "to": 0.0,
+              "start": 1.9,
+              "end": 2.4,
+              "easing": "easeIn"
+            }
+          ]
+        },
+        {
+          "id": "intro-bg",
+          "start": 0.0,
+          "duration": 0.0,
+          "type": "test",
+          "transform": {
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "opacity": 1.0
+          },
+          "animations": []
+        }
+      ]
+    },
+    {
+      "id": "scene-media",
+      "name": "Media",
+      "duration": 4.0,
+      "layers": [
+        {
+          "id": "media-lower-third",
+          "start": 0.5,
+          "duration": 3.0,
+          "type": "compref",
+          "ref": "lower-third",
+          "args": {
+            "name": "KiKaraage",
+            "role": "Author"
+          },
+          "transform": {
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "opacity": 1.0
+          },
+          "animations": []
+        },
+        {
+          "id": "media-ball",
+          "start": 0.0,
+          "duration": 4.0,
+          "type": "video",
+          "src": "assets/ball.mp4",
+          "offset": 0.0,
+          "volume": 1.0,
+          "transform": {
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.0,
+            "height": 0.0,
+            "opacity": 1.0
+          },
+          "animations": []
+        }
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "id": "overlay-watermark",
+      "name": "Watermark",
+      "clips": [
+        {
+          "id": "wm-text",
+          "start": 0.5,
+          "duration": 6.0,
+          "type": "text",
+          "text": "watermark: crosses the scene cut",
+          "font": "Sans 16",
+          "color": "#80ffffff",
+          "transform": {
+            "x": 850.0,
+            "y": 40.0,
+            "width": 0.0,
+            "height": 0.0,
+            "opacity": 1.0
+          },
+          "animations": []
+        }
+      ]
+    }
+  ]
+}

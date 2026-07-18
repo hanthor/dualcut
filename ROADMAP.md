@@ -105,6 +105,13 @@ Project
 - **M1 — Engine + document.** Document model v2 (serde), document⇄GES
   mapping layer, undo/redo as document diffs, autosave, the HTTP agent API
   (port the v0 contract + AGENTS.md).
+  *Status: core complete (2026-07-18) — `document.rs` (scenes/overlays/defs
+  with validation), `mapping.rs` (document→GES: sequential scenes, absolute
+  overlays, parameterised def instantiation, per-property animation control
+  sources with easing), `render <project.json>` and the `serve` agent API
+  (GET/POST /project, POST /render, /status) verified end-to-end: agent
+  edit round-trip persisted + rendered. Undo/redo as document diffs moves
+  to M2 with the UI.*
 - **M2 — Editor UI.** GTK4/libadwaita shell: preview, scene strip + overlay
   tracks timeline (drag/trim/reorder), inspector sidebar — feature parity
   with the v0 web prototype, but native.
@@ -126,8 +133,11 @@ Project
 
 ## Open questions
 
-1. Scene *audio*: does a video clip's own audio belong to the scene while
-   music is an overlay? (Proposed: yes — scene-local audio + overlay audio.)
+1. ~~Scene *audio*~~ **decided**: a video clip's own audio is scene-local;
+   music/VO lives on overlays. Plus a **detach-audio** op (like other
+   editors): splits a video's audio into an independent audio clip
+   (schema supports it today via video `volume: 0` + an `audio` clip with
+   the same src/offset; the one-click op arrives with the M2 UI).
 2. Vello alpha risk — spike passed (0.9 renders the shape set headless on
    llvmpipe); final Vello vs `skia-safe` call once M3 measures real scenes
    on real GPUs.
