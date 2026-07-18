@@ -86,6 +86,12 @@ Project
   window, render to MP4. Proves decode→timeline→display→export before any
   editor code. Also: Vello-to-GL-texture-into-GES proof, and a
   deno_core "hello editor API" embed.
+  *Status: `engine/` crate landed — GES timeline (test source + URI clip +
+  transparent title) renders to H.264/AAC MP4 headless (`cargo run --bin
+  render`), and the GTK4 preview window with gtk4paintablesink builds and
+  launches (`cargo run --features preview --bin preview`, verified under
+  Xvfb; GPU frame display pending a real desktop session). Remaining:
+  Vello texture source, deno_core embed.*
 - **M1 — Engine + document.** Document model v2 (serde), document⇄GES
   mapping layer, undo/redo as document diffs, autosave, the HTTP agent API
   (port the v0 contract + AGENTS.md).
