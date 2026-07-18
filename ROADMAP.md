@@ -1,0 +1,113 @@
+# Roadmap — native, GPU-accelerated rewrite
+
+The current web prototype (this repo's Vite app) stays as the v0 reference
+for UX and the dual-editing sync model. The next phase moves rendering and
+media off the DOM entirely.
+
+## Decisions so far (the compromises)
+
+- **No DOM rendering.** GPU acceleration wherever possible. **No WebKitGTK**
+  anywhere in the stack (this also rules out Tauri on Linux, which embeds it).
+- **Implementation language: Rust** (rationale below).
+- **Scripting: TypeScript first**, but the scripting surface is a stable
+  document + API boundary, so other languages can drive the editor too.
+
+## Why Rust (ecosystem survey)
+
+| Need | Rust | Go | GJS |
+|---|---|---|---|
+| NLE engine (timeline/clips/effects/render) | **GES** — [GStreamer Editing Services has maintained Rust bindings](https://gstreamer.pages.freedesktop.org/gstreamer-rs/stable/latest/docs/gstreamer_editing_services/): `Timeline`, `Layer`, `Clip`, `Group`, transitions, rendering — a whole editing engine for free | none; cgo→FFmpeg only, no timeline layer | GES via GObject-Introspection, but JS-side perf ceiling |
+| Media pipeline | [gstreamer-rs](https://lib.rs/crates/gstreamer) is first-class (GStreamer itself ships [official plugins written in Rust](https://github.com/GStreamer/gst-plugins-rs)) | weak | good (GI) |
+| GPU video display | [gtk4paintablesink](https://lib.rs/crates/gst-plugin-gtk4): GL textures + **DMABuf zero-copy on GTK ≥ 4.14** | no story | possible, less control |
+| GPU 2D (shapes/titles) | wgpu; [Vello](https://github.com/linebender/vello) (alpha but advancing — [Linebender status](https://linebender.org/blog/tmil-24/)); `skia-safe` as the boring fallback | Gio/Fyne (small) | GSK only |
+| Embedded TS runtime | [deno_core](https://crates.io/crates/deno_core) / [rustyscript](https://github.com/rscarson/rustyscript) (V8 + TS transpile in-process) | no | is JS, but can't embed *user* TS cleanly |
+
+Go has no serious media-editing ecosystem. GJS gets GTK4+GES but leaves no
+good path for custom GPU compositing or embedding user TypeScript. Rust
+uniquely has all four pillars, and the GStreamer/GTK combo keeps us native
+GNOME-adjacent without WebKitGTK.
+
+**Stack:** `gtk4-rs` + libadwaita (UI, GPU-rendered via GSK) ·
+GStreamer + **GES** (decode, timeline, audio, export) ·
+`gtk4paintablesink` DMABuf (preview) ·
+wgpu + Vello for the shapes/titles/motion-graphics compositor (rendered to
+GL textures fed into the GES pipeline as a source; swap in `skia-safe` if
+Vello's alpha gaps bite) ·
+`deno_core` for in-process TypeScript.
+
+## Document model v2
+
+```
+Project
+├─ meta            width, height, fps, background
+├─ defs            reusable compositions (templates), keyed by name
+│    └─ Composition { params: {name, type, default}[], scene-or-layers }
+├─ scenes[]        sequential — the narrative spine; no gaps, order = time
+│    └─ Scene { duration, transition-in?, layers[] }
+│         └─ layers: text | video | audio | image | shape | comp-ref
+└─ overlays[]      tracks that span scene boundaries ← solves the
+     └─ OverlayTrack { clips[] }        subtitle/music overlap problem
+```
+
+- **Scenes** answer "what happens next": cut-to-cut structure like CapCut's
+  main track. Elements inside a scene are timed relative to the scene.
+- **Overlays** answer the concern raised about the scene model: subtitles,
+  background music, watermarks, and lower-thirds don't respect scene cuts,
+  so they live on composition-level overlay tracks with absolute timing —
+  scenes for structure, overlays for anything that crosses cuts.
+- **Reusable compositions (`defs`)**: a named, parameterised set of layers —
+  a text template ("lower third: {name}, {title}"), a motion template
+  (logo sting), an intro card. Instantiated via `comp-ref` with arguments;
+  editing the def updates every instance. Maps 1:1 onto GES's
+  nested-timeline/`Group` support.
+- **Shapes**: circle, ellipse, rectangle (rounded), star, polygon, line,
+  arrow, and arbitrary SVG paths — all GPU-drawn vectors, animatable
+  (fill, stroke, path morph later).
+- Keep v0's animation primitive (`from/to` tween windows per property with
+  easing incl. spring); add transform-origin and per-scene transitions
+  (cut, crossfade, slide, wipe).
+
+## Scripting model
+
+- **In-app TS console + script panel**: `deno_core` runs user TypeScript
+  against a typed `editor.*` API (query/mutate the document, not pixels).
+- **External agents, any language**: same as v0 — the document is
+  serialized JSON on disk plus a local HTTP/Unix-socket API
+  (`GET/POST /composition`, plus granular ops later: `patch`, `addScene`,
+  `renderFrame` for screenshot feedback). TS is first-class; anything that
+  can speak JSON-over-HTTP is supported.
+- Typed schema published as both TS declarations (`.d.ts`) and JSON Schema
+  so agents and humans get completion/validation in either world.
+
+## Milestones
+
+- **M0 — Pipeline spike (de-risk).** Rust bin: build a GES timeline with two
+  video clips + a title, preview via gtk4paintablesink in a bare GTK4
+  window, render to MP4. Proves decode→timeline→display→export before any
+  editor code. Also: Vello-to-GL-texture-into-GES proof, and a
+  deno_core "hello editor API" embed.
+- **M1 — Engine + document.** Document model v2 (serde), document⇄GES
+  mapping layer, undo/redo as document diffs, autosave, the HTTP agent API
+  (port the v0 contract + AGENTS.md).
+- **M2 — Editor UI.** GTK4/libadwaita shell: preview, scene strip + overlay
+  tracks timeline (drag/trim/reorder), inspector sidebar — feature parity
+  with the v0 web prototype, but native.
+- **M3 — Shapes & motion.** Vector layer types, animation editor, scene
+  transitions, transform handles in the preview.
+- **M4 — Scripting.** Embedded TS runtime + script panel, typed `editor.*`
+  API, `.d.ts`/JSON Schema publishing, agent recipes.
+- **M5 — Templates.** `defs`/`comp-ref` with params, "save selection as
+  template", a small built-in template library (lower third, title card,
+  caption style).
+- **M6 — Export & polish.** Render queue (GES render profiles: MP4/WebM,
+  resolution/bitrate presets), audio gain/fades, waveforms + thumbnails on
+  clips, snapping, multi-select.
+
+## Open questions
+
+1. Scene *audio*: does a video clip's own audio belong to the scene while
+   music is an overlay? (Proposed: yes — scene-local audio + overlay audio.)
+2. Vello alpha risk — decide Vello vs `skia-safe` at M0 with real numbers.
+3. Name: Chop / Clip / **Compose** / Frame / Collect / Pack — pending.
+4. Does v0 (web) stay maintained as a thin remote UI, or freeze as
+   reference once M2 reaches parity?
