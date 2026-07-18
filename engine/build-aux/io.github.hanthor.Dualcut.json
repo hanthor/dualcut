@@ -1,8 +1,7 @@
 {
   "//": "Flatpak manifest \u2014 the deliverable. Built in CI by .github/workflows/flatpak.yml,",
   "//2": "which generates cargo-sources.json with flatpak-cargo-generator before building.",
-  "//3": "Ships the preview feature only for now; scripting (V8) needs an offline",
-  "//4": "RUSTY_V8_ARCHIVE source and joins the bundle at M4.",
+  "//3": "Scripting ships in the bundle: rusty_v8's static lib is provided offline via RUSTY_V8_ARCHIVE.",
   "id": "io.github.hanthor.Dualcut",
   "runtime": "org.gnome.Platform",
   "runtime-version": "50",
@@ -18,9 +17,8 @@
     "--device=dri",
     "--share=ipc",
     "--env=GST_PLUGIN_PATH=/app/lib/gstreamer-1.0",
-    "--filesystem=xdg-videos:ro",
-    "--filesystem=xdg-pictures:ro",
-    "--filesystem=xdg-music:ro"
+    "--share=network",
+    "--filesystem=home"
   ],
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",
@@ -51,7 +49,7 @@
       "name": "dualcut",
       "buildsystem": "simple",
       "build-commands": [
-        "cargo --offline build --release --features preview,vector --bin preview",
+        "cargo --offline build --release --features preview,vector,scripting --bin preview",
         "install -Dm755 target/release/preview /app/bin/dualcut",
         "install -Dm644 build-aux/io.github.hanthor.Dualcut.desktop /app/share/applications/io.github.hanthor.Dualcut.desktop",
         "install -Dm644 build-aux/io.github.hanthor.Dualcut.metainfo.xml /app/share/metainfo/io.github.hanthor.Dualcut.metainfo.xml",
@@ -62,8 +60,21 @@
           "type": "dir",
           "path": ".."
         },
+        {
+          "type": "file",
+          "url": "https://github.com/denoland/rusty_v8/releases/download/v137.3.0/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz",
+          "sha256": "a2681fde53018abd3366018f132617dd598002df78f156c7bc6d2ff608b56567",
+          "only-arches": [
+            "x86_64"
+          ]
+        },
         "cargo-sources.json"
-      ]
+      ],
+      "build-options": {
+        "env": {
+          "RUSTY_V8_ARCHIVE": "/run/build/dualcut/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz"
+        }
+      }
     }
   ]
 }

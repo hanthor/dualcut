@@ -28,7 +28,9 @@ truth. Three surfaces edit it:
 | In-app code | **Code** tab (CodeMirror JSON editor) | valid JSON applies live, debounced |
 | External agents | edit `composition.json`, or `GET`/`POST /__composition` | pushed into the running app over the Vite websocket |
 
-See [AGENTS.md](AGENTS.md) for the document schema and agent workflow.
+See [AGENTS.md](AGENTS.md) for the document schema and agent workflow, or
+point your agent at [skills/dualcut/SKILL.md](skills/dualcut/SKILL.md) —
+an agent skill that ships in this repo, versioned with every commit.
 
 ## Run it
 

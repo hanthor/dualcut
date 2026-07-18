@@ -13,8 +13,13 @@ use gstreamer_pbutils as gst_pbutils;
 use gstreamer_editing_services as ges;
 
 pub mod document;
+pub mod api;
+#[cfg(feature = "preview")]
+pub mod thumbs;
 pub mod mapping;
 pub mod templates;
+#[cfg(feature = "scripting")]
+pub mod scripting;
 #[cfg(feature = "vector")]
 pub mod vector;
 

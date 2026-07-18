@@ -151,21 +151,5 @@ fn render_with_profile(
     Ok(compiled.warnings)
 }
 
-/// Run a TypeScript module against the current document. The module must
-/// export `edit(project: Project): Project`; the returned document is
-/// validated before being accepted.
 #[cfg(feature = "scripting")]
-fn run_script(source: &str, project: &Project) -> Result<Project> {
-    use rustyscript::{json_args, Module, Runtime, RuntimeOptions};
-    let mut runtime = Runtime::new(RuntimeOptions::default())?;
-    let module = Module::new("agent-script.ts", source);
-    let handle = runtime.load_module(&module)?;
-    let value: serde_json::Value = runtime.call_function(
-        Some(&handle),
-        "edit",
-        json_args!(serde_json::to_value(project)?),
-    )?;
-    let edited: Project = serde_json::from_value(value).context("script returned invalid document")?;
-    edited.validate()?;
-    Ok(edited)
-}
+use dualcut_engine::scripting::run_script;

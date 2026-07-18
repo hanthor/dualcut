@@ -239,6 +239,8 @@ impl Editor {
             st.project.clone()
         };
         let Some(project) = project else { return };
+        let cache = self.base_dir().join(".dualcut-cache");
+        self.spawn_thumbnail_worker(&project, &cache);
 
         let scene_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         for (i, scene) in project.scenes.iter().enumerate() {
@@ -246,6 +248,15 @@ impl Editor {
             let button = gtk::Button::with_label(&format!("{label}\n{:.1}s", scene.duration));
             button.set_size_request((scene.duration * SCENE_PX_PER_SEC) as i32, 48);
             button.set_tooltip_text(Some(&scene.id));
+            if let Some(thumb) = scene_thumb(&project, scene, &cache, &self.base_dir()) {
+                let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let pic = gtk::Picture::for_filename(&thumb);
+                pic.set_size_request(64, 36);
+                content.append(&pic);
+                let lbl = gtk::Label::new(Some(&format!("{label}\n{:.1}s", scene.duration)));
+                content.append(&lbl);
+                button.set_child(Some(&content));
+            }
             let offset = project.scene_offset(i);
             let this = self.clone();
             button.connect_clicked(move |_| {
@@ -281,6 +292,51 @@ impl Editor {
         }
     }
 
+    /// Generate any missing media thumbnails off-thread, then refresh the
+    /// strip once so they appear.
+    fn spawn_thumbnail_worker(self: &Rc<Self>, project: &Project, cache: &std::path::Path) {
+        let base_dir = self.base_dir();
+        let mut wanted: Vec<String> = Vec::new();
+        for scene in &project.scenes {
+            for clip in &scene.layers {
+                if let document::Element::Video { src, .. } | document::Element::Image { src } =
+                    &clip.element
+                {
+                    if let Some(uri) = media_uri(src, &base_dir) {
+                        let file = cache.join(format!("thumb-{:016x}.png", fx_hash(&uri)));
+                        if !file.exists() {
+                            wanted.push(uri);
+                        }
+                    }
+                }
+            }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        let cache = cache.to_path_buf();
+        let this = self.clone();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            for uri in wanted {
+                if let Err(e) = dualcut_engine::thumbs::thumbnail_png(&cache, &uri) {
+                    eprintln!("thumbnail failed for {uri}: {e:#}");
+                }
+            }
+            let _ = tx.send(());
+        });
+        glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
+            match rx.try_recv() {
+                Ok(()) => {
+                    this.rebuild_strip();
+                    glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(_) => glib::ControlFlow::Break,
+            }
+        });
+    }
+
     fn rebuild_inspector(self: &Rc<Self>) {
         let (project, selected) = {
             let st = self.state.borrow();
@@ -301,6 +357,7 @@ impl Editor {
         // Clip list.
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::Multiple);
         let mut entries: Vec<(String, String)> = Vec::new();
         for scene in &project.scenes {
             for clip in &scene.layers {
@@ -328,13 +385,16 @@ impl Editor {
         {
             let this = self.clone();
             let ids: Vec<String> = entries.iter().map(|(_, id)| id.clone()).collect();
-            list.connect_row_selected(move |_, row| {
-                let Some(row) = row else { return };
-                let id = ids[row.index() as usize].clone();
+            list.connect_selected_rows_changed(move |list| {
+                let rows = list.selected_rows();
+                let Some(last) = rows.last() else { return };
+                let id = ids[last.index() as usize].clone();
                 let changed = {
                     let mut st = this.state.borrow_mut();
-                    let changed = st.selected.as_ref() != Some(&id);
-                    st.selected = Some(id);
+                    let changed = st.selected.as_ref() != Some(&id) && rows.len() == 1;
+                    if rows.len() == 1 {
+                        st.selected = Some(id);
+                    }
                     changed
                 };
                 if changed {
@@ -350,6 +410,28 @@ impl Editor {
         scroll.set_vexpand(true);
         scroll.set_min_content_height(160);
         uiref.inspector.append(&scroll);
+
+        // Multi-select delete (Ctrl/Shift-click rows, then delete them all).
+        let del_sel = gtk::Button::with_label("Delete selected");
+        {
+            let this = self.clone();
+            let list = list.clone();
+            let ids: Vec<String> = entries.iter().map(|(_, id)| id.clone()).collect();
+            let project_snapshot = project.clone();
+            del_sel.connect_clicked(move |_| {
+                let rows = list.selected_rows();
+                if rows.is_empty() {
+                    return;
+                }
+                let mut project = project_snapshot.clone();
+                for row in rows {
+                    remove_clip(&mut project, &ids[row.index() as usize]);
+                }
+                this.state.borrow_mut().selected = None;
+                this.commit_document(project);
+            });
+        }
+        uiref.inspector.append(&del_sel);
 
         // Editor form for the selected clip.
         let Some(selected) = selected else { return };
@@ -458,6 +540,102 @@ impl Editor {
     }
 }
 
+/// Cached thumbnail path for a scene's first media layer, if generated.
+fn scene_thumb(
+    project: &Project,
+    scene: &document::Scene,
+    cache: &std::path::Path,
+    base_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let _ = project;
+    for clip in &scene.layers {
+        if let document::Element::Video { src, .. } | document::Element::Image { src } = &clip.element {
+            let uri = media_uri(src, base_dir)?;
+            let file = cache.join(format!("thumb-{:016x}.png", fx_hash(&uri)));
+            if file.exists() {
+                return Some(file);
+            }
+        }
+    }
+    None
+}
+
+fn media_uri(src: &str, base_dir: &std::path::Path) -> Option<String> {
+    if src.contains("://") {
+        return Some(src.to_string());
+    }
+    base_dir.join(src).canonicalize().ok().map(|p| format!("file://{}", p.display()))
+}
+
+fn fx_hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+#[cfg(feature = "scripting")]
+fn build_script_panel(editor: &Rc<Editor>) -> gtk::Box {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    page.set_margin_top(8);
+    page.set_margin_start(8);
+    page.set_margin_end(8);
+    page.set_margin_bottom(8);
+
+    let hint = gtk::Label::new(Some(
+        "TypeScript — must export edit(project: Project): Project.\nTypes: engine/schema/dualcut.d.ts",
+    ));
+    hint.add_css_class("dim-label");
+    hint.set_halign(gtk::Align::Start);
+    hint.set_wrap(true);
+    page.append(&hint);
+
+    let buffer = gtk::TextBuffer::new(None);
+    buffer.set_text(
+        "export function edit(project) {\n  // e.g. retitle every scene:\n  // project.scenes.forEach((s, i) => s.name = `Scene ${i + 1}`);\n  return project;\n}\n",
+    );
+    let view = gtk::TextView::with_buffer(&buffer);
+    view.set_monospace(true);
+    view.set_vexpand(true);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&view));
+    scroll.set_vexpand(true);
+    page.append(&scroll);
+
+    let status = gtk::Label::new(None);
+    status.set_halign(gtk::Align::Start);
+    status.set_wrap(true);
+    let run = gtk::Button::with_label("Run script");
+    run.add_css_class("suggested-action");
+    {
+        let editor = editor.clone();
+        let status = status.clone();
+        run.connect_clicked(move |_| {
+            let source = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+            let project = {
+                let st = editor.state.borrow();
+                st.project.clone()
+            };
+            let Some(project) = project else {
+                status.set_text("no project loaded");
+                return;
+            };
+            match dualcut_engine::scripting::run_script(&source, &project) {
+                Ok(edited) => {
+                    status.set_text("✓ applied");
+                    editor.commit_document(edited);
+                }
+                Err(e) => status.set_text(&format!("✗ {e:#}")),
+            }
+        });
+    }
+    page.append(&run);
+    page.append(&status);
+    page
+}
+
 fn build_ui(app: &adw::Application) -> Result<()> {
     init()?;
     gstgtk4::plugin_register_static().context("registering gtk4paintablesink")?;
@@ -478,6 +656,22 @@ fn build_ui(app: &adw::Application) -> Result<()> {
 
     let (pipeline, paintable) = make_pipeline(&timeline)?;
     let mtime = project_path.as_ref().and_then(|p| p.metadata().ok()?.modified().ok());
+
+    // Agent surface: HTTP API over the project file (the mtime watcher
+    // makes agent edits appear live in the UI). DUALCUT_API_PORT=0 disables.
+    if let Some(path) = project_path.clone() {
+        let port: u16 = std::env::var("DUALCUT_API_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(7357);
+        if port != 0 {
+            std::thread::spawn(move || {
+                if let Err(e) = dualcut_engine::api::serve_file_api(path, port) {
+                    eprintln!("agent API not available: {e:#}");
+                }
+            });
+        }
+    }
 
     let editor = Rc::new(Editor {
         state: Rc::new(RefCell::new(AppState {
@@ -616,9 +810,25 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     inspector.set_margin_end(8);
     inspector.set_size_request(300, -1);
 
+    let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let stack = gtk::Stack::new();
+    stack.add_titled(&inspector, Some("inspect"), "Inspect");
+    #[cfg(feature = "scripting")]
+    {
+        let script_page = build_script_panel(&editor);
+        stack.add_titled(&script_page, Some("script"), "Script");
+    }
+    let switcher = gtk::StackSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    switcher.set_halign(gtk::Align::Center);
+    switcher.set_margin_top(6);
+    sidebar.append(&switcher);
+    sidebar.append(&stack);
+    stack.set_vexpand(true);
+
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.set_start_child(Some(&left));
-    paned.set_end_child(Some(&inspector));
+    paned.set_end_child(Some(&sidebar));
     paned.set_resize_start_child(true);
     paned.set_shrink_end_child(false);
     paned.set_position(760);

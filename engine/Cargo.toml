@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.103"
 gst-plugin-gtk4 = { version = "0.15.2", optional = true }
 gstreamer = "0.25.3"
+gstreamer-app = "0.25.2"
 gstreamer-controller = "0.25.2"
 gstreamer-editing-services = "0.25.2"
 gstreamer-pbutils = "0.25.2"
@@ -21,7 +22,7 @@ tiny_http = "0.12.0"
 vello = { version = "0.9.0", optional = true }
 
 [features]
-preview = ["dep:gtk4", "dep:libadwaita", "dep:gst-plugin-gtk4"]
+preview = ["dep:gtk4", "dep:libadwaita", "dep:gst-plugin-gtk4", "dep:image"]
 scripting = ["dep:rustyscript"]
 vector = ["dep:vello", "dep:pollster", "dep:image"]
 
