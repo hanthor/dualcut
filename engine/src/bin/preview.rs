@@ -836,6 +836,66 @@ fn scene_thumb(
     None
 }
 
+/// Composition-space bounding box for a clip (0 width/height = full frame).
+fn clip_box(project: &Project, clip: &document::Clip) -> (f64, f64, f64, f64) {
+    let t = &clip.transform;
+    let w = if t.width > 0.0 { t.width } else { project.meta.width as f64 };
+    let h = if t.height > 0.0 { t.height } else { project.meta.height as f64 };
+    (t.x, t.y, w, h)
+}
+
+/// Clips active at `time` with absolute-time info, topmost first
+/// (overlays before scene layers, lower layer index above higher).
+fn active_clips_at(project: &Project, time: f64) -> Vec<(String, f64, f64, f64, f64)> {
+    let mut out = Vec::new();
+    for track in &project.overlays {
+        for clip in &track.clips {
+            if time >= clip.start && time < clip.start + clip.duration.max(0.01) {
+                let (x, y, w, h) = clip_box(project, clip);
+                out.push((clip.id.clone(), x, y, w, h));
+            }
+        }
+    }
+    for (i, scene) in project.scenes.iter().enumerate() {
+        let offset = project.scene_offset(i);
+        if time < offset || time >= offset + scene.duration {
+            continue;
+        }
+        for clip in &scene.layers {
+            let local = time - offset;
+            let duration = if clip.duration > 0.0 { clip.duration } else { scene.duration - clip.start };
+            if local >= clip.start && local < clip.start + duration {
+                let (x, y, w, h) = clip_box(project, clip);
+                out.push((clip.id.clone(), x, y, w, h));
+            }
+        }
+    }
+    out
+}
+
+/// Map preview-widget coords to composition coords through ContentFit::Contain
+/// letterboxing. Returns None outside the video area.
+fn widget_to_comp(
+    project: &Project,
+    widget_w: f64,
+    widget_h: f64,
+    wx: f64,
+    wy: f64,
+) -> Option<(f64, f64, f64)> {
+    let (cw, ch) = (project.meta.width as f64, project.meta.height as f64);
+    let scale = (widget_w / cw).min(widget_h / ch);
+    if scale <= 0.0 {
+        return None;
+    }
+    let (vw, vh) = (cw * scale, ch * scale);
+    let (ox, oy) = ((widget_w - vw) / 2.0, (widget_h - vh) / 2.0);
+    let (cx, cy) = ((wx - ox) / scale, (wy - oy) / scale);
+    if cx < 0.0 || cy < 0.0 || cx > cw || cy > ch {
+        return None;
+    }
+    Some((cx, cy, scale))
+}
+
 /// Snap a time to scene boundaries or the half-second grid (0.15s window).
 fn snap_time(project: &Project, raw: f64) -> f64 {
     const WINDOW: f64 = 0.15;
@@ -1085,6 +1145,135 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         .vexpand(true)
         .build();
 
+    // Selection overlay: draws the selected clip's box; gestures select and
+    // move clips directly in the preview.
+    let sel_canvas = gtk::DrawingArea::new();
+    sel_canvas.set_hexpand(true);
+    sel_canvas.set_vexpand(true);
+    let preview_overlay = gtk::Overlay::new();
+    preview_overlay.set_child(Some(&picture));
+    preview_overlay.add_overlay(&sel_canvas);
+    {
+        let editor = editor.clone();
+        let seek = ();
+        let _ = seek;
+        sel_canvas.set_draw_func(move |area, cr, w, h| {
+            let st = editor.state.borrow();
+            let Some(project) = st.project.as_ref() else { return };
+            let Some(selected) = st.selected.as_ref() else { return };
+            let time = st
+                .pipeline
+                .query_position::<gst::ClockTime>()
+                .map(|p| p.nseconds() as f64 / 1e9)
+                .unwrap_or(0.0);
+            let _ = area;
+            for (id, x, y, bw, bh) in active_clips_at(project, time) {
+                if &id != selected {
+                    continue;
+                }
+                let (cw, ch) = (project.meta.width as f64, project.meta.height as f64);
+                let scale = (w as f64 / cw).min(h as f64 / ch);
+                let (ox, oy) = ((w as f64 - cw * scale) / 2.0, (h as f64 - ch * scale) / 2.0);
+                cr.set_source_rgba(0.35, 0.41, 1.0, 0.95);
+                cr.set_line_width(2.0);
+                cr.rectangle(ox + x * scale, oy + y * scale, bw * scale, bh * scale);
+                let _ = cr.stroke();
+                // corner handles
+                cr.set_source_rgba(0.35, 0.41, 1.0, 1.0);
+                for (hx, hy) in [
+                    (x, y), (x + bw, y), (x, y + bh), (x + bw, y + bh),
+                ] {
+                    cr.rectangle(ox + hx * scale - 4.0, oy + hy * scale - 4.0, 8.0, 8.0);
+                    let _ = cr.fill();
+                }
+            }
+        });
+    }
+    {
+        // Click to select the topmost/smallest clip under the pointer.
+        let editor = editor.clone();
+        let canvas = sel_canvas.clone();
+        let click = gtk::GestureClick::new();
+        click.connect_pressed(move |g, _, wx, wy| {
+            let widget = g.widget().unwrap();
+            let (w, h) = (widget.width() as f64, widget.height() as f64);
+            let hit = {
+                let st = editor.state.borrow();
+                let Some(project) = st.project.as_ref() else { return };
+                let Some((cx, cy, _)) = widget_to_comp(project, w, h, wx, wy) else { return };
+                let time = st
+                    .pipeline
+                    .query_position::<gst::ClockTime>()
+                    .map(|p| p.nseconds() as f64 / 1e9)
+                    .unwrap_or(0.0);
+                active_clips_at(project, time)
+                    .into_iter()
+                    .filter(|(_, x, y, bw, bh)| cx >= *x && cx <= x + bw && cy >= *y && cy <= y + bh)
+                    .min_by(|a, b| (a.3 * a.4).total_cmp(&(b.3 * b.4)))
+                    .map(|(id, ..)| id)
+            };
+            if let Some(id) = hit {
+                editor.state.borrow_mut().selected = Some(id);
+                editor.rebuild_inspector();
+                canvas.queue_draw();
+            }
+        });
+        sel_canvas.add_controller(click);
+    }
+    {
+        // Drag the selected clip to move it (commits on release).
+        let editor = editor.clone();
+        let canvas = sel_canvas.clone();
+        let drag = gtk::GestureDrag::new();
+        let orig: Rc<std::cell::Cell<(f64, f64, f64)>> = Rc::new(std::cell::Cell::new((0.0, 0.0, 1.0)));
+        {
+            let editor = editor.clone();
+            let orig = orig.clone();
+            drag.connect_drag_begin(move |g, _, _| {
+                let widget = g.widget().unwrap();
+                let (w, h) = (widget.width() as f64, widget.height() as f64);
+                let st = editor.state.borrow();
+                let (Some(project), Some(selected)) = (st.project.as_ref(), st.selected.as_ref())
+                else {
+                    return;
+                };
+                let scale = {
+                    let (cw, ch) = (project.meta.width as f64, project.meta.height as f64);
+                    (w / cw).min(h / ch)
+                };
+                if let Some(clip) = find_clip(project, selected) {
+                    orig.set((clip.transform.x, clip.transform.y, scale));
+                }
+            });
+        }
+        {
+            let editor = editor.clone();
+            let orig = orig.clone();
+            drag.connect_drag_end(move |_, dx, dy| {
+                if dx.abs() < 2.0 && dy.abs() < 2.0 {
+                    return;
+                }
+                let (ox, oy, scale) = orig.get();
+                if scale <= 0.0 {
+                    return;
+                }
+                let (project, selected) = {
+                    let st = editor.state.borrow();
+                    (st.project.clone(), st.selected.clone())
+                };
+                let (Some(project), Some(selected)) = (project, selected) else { return };
+                let mut project = project;
+                if let Some(clip) = find_clip_mut(&mut project, &selected) {
+                    clip.transform.x = (ox + dx / scale).round();
+                    clip.transform.y = (oy + dy / scale).round();
+                }
+                editor.commit_document(project);
+                canvas.queue_draw();
+            });
+        }
+        sel_canvas.add_controller(drag);
+    }
+
     let play = gtk::Button::from_icon_name("media-playback-start-symbolic");
     let time_label = gtk::Label::new(Some("0:00.0"));
     time_label.add_css_class("numeric");
@@ -1119,7 +1308,9 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         let editor = editor.clone();
         let seek = seek.clone();
         let time_label = time_label.clone();
+        let sel_canvas = sel_canvas.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+            sel_canvas.queue_draw();
             {
                 let st = editor.state.borrow();
                 if let Some(pos) = st.pipeline.query_position::<gst::ClockTime>() {
@@ -1200,7 +1391,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     strip_scroll.set_min_content_height(110);
 
     let left = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    left.append(&picture);
+    left.append(&preview_overlay);
     left.append(&transport);
     left.append(&strip_scroll);
 
