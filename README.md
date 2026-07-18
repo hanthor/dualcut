@@ -1,5 +1,11 @@
 # dualcut
 
+**Install / update the app (Flatpak):**
+
+```sh
+curl -LO https://github.com/hanthor/dualcut/releases/latest/download/dualcut.flatpak && flatpak install --user --reinstall -y dualcut.flatpak
+```
+
 A video editor with **dual usage**: edit manually (multi-track timeline +
 parameter sidebar) or programmatically (live JSON document, editable in-app
 or by external agents) — both at the same time, always in sync.
