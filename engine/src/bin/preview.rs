@@ -536,6 +536,147 @@ impl Editor {
         }
         form.append(&apply);
 
+        // ── Animations ─────────────────────────────────────────
+        let anim_head = gtk::Label::new(Some("Animations"));
+        anim_head.add_css_class("heading");
+        anim_head.set_halign(gtk::Align::Start);
+        anim_head.set_margin_top(8);
+        form.append(&anim_head);
+
+        const PROPS: [&str; 3] = ["x", "y", "opacity"];
+        const EASINGS: [&str; 4] = ["linear", "easeIn", "easeOut", "easeInOut"];
+        let prop_of = |a: &document::AnimProperty| match a {
+            document::AnimProperty::X => 0,
+            document::AnimProperty::Y => 1,
+            document::AnimProperty::Opacity => 2,
+        };
+        let ease_of = |e: &document::Easing| match e {
+            document::Easing::Linear => 0,
+            document::Easing::EaseIn => 1,
+            document::Easing::EaseOut => 2,
+            document::Easing::EaseInOut => 3,
+        };
+
+        for (ai, anim) in clip.animations.iter().enumerate() {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let commit_anim = {
+                let this = self.clone();
+                let project = project.clone();
+                let clip_id = clip.id.clone();
+                Rc::new(move |mutate: Box<dyn Fn(&mut document::Anim)>| {
+                    let mut project = project.clone();
+                    if let Some(c) = find_clip_mut(&mut project, &clip_id) {
+                        if let Some(a) = c.animations.get_mut(ai) {
+                            mutate(a);
+                        }
+                    }
+                    this.commit_document(project);
+                })
+            };
+
+            let prop = gtk::DropDown::from_strings(&PROPS);
+            prop.set_selected(prop_of(&anim.property) as u32);
+            {
+                let commit = commit_anim.clone();
+                prop.connect_selected_notify(move |dd| {
+                    let value = match dd.selected() {
+                        0 => document::AnimProperty::X,
+                        1 => document::AnimProperty::Y,
+                        _ => document::AnimProperty::Opacity,
+                    };
+                    commit(Box::new(move |a| a.property = value));
+                });
+            }
+            row.append(&prop);
+
+            let mut add_spin = |value: f64, lo: f64, hi: f64, set: fn(&mut document::Anim, f64)| {
+                let s = gtk::SpinButton::with_range(lo, hi, 0.1);
+                s.set_value(value);
+                s.set_width_chars(5);
+                let commit = commit_anim.clone();
+                s.connect_value_changed(move |s| {
+                    let v = s.value();
+                    commit(Box::new(move |a| set(a, v)));
+                });
+                row.append(&s);
+            };
+            add_spin(anim.from, -10000.0, 10000.0, |a, v| a.from = v);
+            add_spin(anim.to, -10000.0, 10000.0, |a, v| a.to = v);
+            add_spin(anim.start, 0.0, 3600.0, |a, v| a.start = v);
+            add_spin(anim.end, 0.0, 3600.0, |a, v| a.end = v);
+
+            let ease = gtk::DropDown::from_strings(&EASINGS);
+            ease.set_selected(ease_of(&anim.easing) as u32);
+            {
+                let commit = commit_anim.clone();
+                ease.connect_selected_notify(move |dd| {
+                    let value = match dd.selected() {
+                        1 => document::Easing::EaseIn,
+                        2 => document::Easing::EaseOut,
+                        3 => document::Easing::EaseInOut,
+                        _ => document::Easing::Linear,
+                    };
+                    commit(Box::new(move |a| a.easing = value));
+                });
+            }
+            row.append(&ease);
+
+            let del = gtk::Button::from_icon_name("edit-delete-symbolic");
+            del.add_css_class("flat");
+            {
+                let this = self.clone();
+                let project = project.clone();
+                let clip_id = clip.id.clone();
+                del.connect_clicked(move |_| {
+                    let mut project = project.clone();
+                    if let Some(c) = find_clip_mut(&mut project, &clip_id) {
+                        if ai < c.animations.len() {
+                            c.animations.remove(ai);
+                        }
+                    }
+                    this.commit_document(project);
+                });
+            }
+            row.append(&del);
+            form.append(&row);
+        }
+
+        // Presets.
+        let presets = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let mut add_preset = |label: &str, make: fn(&document::Clip) -> document::Anim| {
+            let b = gtk::Button::with_label(label);
+            let this = self.clone();
+            let project = project.clone();
+            let clip_id = clip.id.clone();
+            b.connect_clicked(move |_| {
+                let mut project = project.clone();
+                if let Some(c) = find_clip_mut(&mut project, &clip_id) {
+                    let anim = make(c);
+                    c.animations.push(anim);
+                }
+                this.commit_document(project);
+            });
+            presets.append(&b);
+        };
+        add_preset("+ Fade in", |_| document::Anim {
+            property: document::AnimProperty::Opacity,
+            from: 0.0, to: 1.0, start: 0.0, end: 0.5,
+            easing: document::Easing::EaseOut,
+        });
+        add_preset("+ Fade out", |c| document::Anim {
+            property: document::AnimProperty::Opacity,
+            from: 1.0, to: 0.0,
+            start: (c.duration - 0.5).max(0.0), end: c.duration.max(0.5),
+            easing: document::Easing::EaseIn,
+        });
+        add_preset("+ Slide in", |c| document::Anim {
+            property: document::AnimProperty::X,
+            from: c.transform.x - 300.0, to: c.transform.x,
+            start: 0.0, end: 0.6,
+            easing: document::Easing::EaseOut,
+        });
+        form.append(&presets);
+
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         if matches!(clip.element, document::Element::Video { .. }) {
             let detach = gtk::Button::with_label("Detach audio");
