@@ -139,11 +139,12 @@ Project
   *Status: profiles done (2026-07-18) — MP4 (H.264/AAC) and WebM
   (VP8/Vorbis) by name or extension, CLI + /render. Remaining: queue UI,
   bitrate presets, waveforms/thumbnails, snapping, multi-select.*
-- **M7 — Flatpak & Flathub.** The shipping artifact: finish the manifest
+- **M7 — Flatpak distribution.** The shipping artifact: manifest
   (GNOME runtime, rust-stable SDK extension, `flatpak-cargo-generator`
-  offline sources, GES module if the runtime lacks it), portals for media
-  access (no broad filesystem holes), appstream metainfo + screenshots,
-  Flathub submission under KiKaraage/hanthor.
+  offline sources, GES module), portals for media access, appstream
+  metainfo + screenshots. **No Flathub submission** — Flathub's current
+  AI policy rules it out (decided 2026-07-18); GitHub Releases is the
+  distribution channel (install one-liner in the README).
   *Status: automated releases live (2026-07-18) — every `v*` tag builds
   `dualcut.flatpak` (GNOME 50 runtime + GES module) and attaches it to a
   GitHub Release; verified end-to-end with the README install one-liner
