@@ -168,3 +168,19 @@ Rasters cache under `<project dir>/.dualcut-cache/`.
 `POST /script` with a TypeScript body: `export function edit(p: Project): Project`.
 Runs in-process, result validated and saved. Types: `engine/schema/dualcut.d.ts`;
 JSON Schema: `engine/schema/dualcut.schema.json`.
+
+## Live vector sources (vello://)
+
+With the `vector` feature, the engine registers a `vellosrc` GStreamer
+element with a `vello://` URI handler. Any `video` clip can use one as its
+`src` for live per-frame GPU vector rendering:
+
+```jsonc
+{ "id": "spinner", "type": "video", "start": 0, "duration": 3,
+  "src": "vello://star?fill=%23ff5470&w=200&h=200&spin=1" }
+```
+
+Shapes: rect|circle|ellipse|star|polygon|line|arrow. Query params: `fill`
+(url-encoded hex), `w`/`h` (px), `spin=1` (rotation demo of per-frame
+rendering). Static `shape` clips keep using cached PNG rasters (zero
+per-frame cost); use vello:// when you need live animation.

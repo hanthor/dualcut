@@ -131,24 +131,15 @@ fn build_shape_scene(kind: ShapeKind, fill: Color, w: f64, h: f64) -> Scene {
     scene
 }
 
-/// Rasterize a shape to a transparent PNG in `cache_dir`, returning its
-/// path. Cached by shape/fill/size.
-pub fn shape_png(
-    cache_dir: &Path,
+/// Rasterize a shape to raw RGBA pixels (row-major, tightly packed).
+/// `rotate` is radians about the center — used by vellosrc for live frames.
+pub fn render_shape_rgba(
     kind: ShapeKind,
     fill_hex: &str,
     width: u32,
     height: u32,
-) -> Result<PathBuf> {
-    let file = cache_dir.join(format!(
-        "shape-{kind:?}-{}-{width}x{height}.png",
-        fill_hex.trim_start_matches('#')
-    ));
-    if file.exists() {
-        return Ok(file);
-    }
-    std::fs::create_dir_all(cache_dir)?;
-
+    rotate: f64,
+) -> Result<Vec<u8>> {
     let gpu = gpu().context("no GPU/Vulkan adapter available for shape rendering")?;
     let mut renderer = Renderer::new(&gpu.device, RendererOptions::default())
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -160,7 +151,21 @@ pub fn shape_png(
         (argb & 0xff) as u8,
         ((argb >> 24) & 0xff) as u8,
     );
-    let scene = build_shape_scene(kind, color, width as f64, height as f64);
+    let mut scene = build_shape_scene(kind, color, width as f64, height as f64);
+    if rotate != 0.0 {
+        let rotated = {
+            let mut s = Scene::new();
+            s.append(
+                &scene,
+                Some(Affine::rotate_about(
+                    rotate,
+                    vello::kurbo::Point::new(width as f64 / 2.0, height as f64 / 2.0),
+                )),
+            );
+            s
+        };
+        scene = rotated;
+    }
 
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("shape target"),
@@ -222,14 +227,33 @@ pub fn shape_png(
         .map_err(|e| anyhow::anyhow!("{e:?}"))?;
     let data = slice.get_mapped_range();
 
-    let mut img = image::RgbaImage::new(width, height);
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
         let row = &data[(y * bytes_per_row) as usize..][..(width * 4) as usize];
-        for x in 0..width {
-            let i = (x * 4) as usize;
-            img.put_pixel(x, y, image::Rgba([row[i], row[i + 1], row[i + 2], row[i + 3]]));
-        }
+        pixels.extend_from_slice(row);
     }
+    Ok(pixels)
+}
+
+/// Rasterize a shape to a transparent PNG in `cache_dir`, returning its
+/// path. Cached by shape/fill/size.
+pub fn shape_png(
+    cache_dir: &Path,
+    kind: ShapeKind,
+    fill_hex: &str,
+    width: u32,
+    height: u32,
+) -> Result<PathBuf> {
+    let file = cache_dir.join(format!(
+        "shape-{kind:?}-{}-{width}x{height}.png",
+        fill_hex.trim_start_matches('#')
+    ));
+    if file.exists() {
+        return Ok(file);
+    }
+    std::fs::create_dir_all(cache_dir)?;
+    let pixels = render_shape_rgba(kind, fill_hex, width, height, 0.0)?;
+    let img = image::RgbaImage::from_raw(width, height, pixels).context("image from raw")?;
     img.save(&file).with_context(|| format!("saving {}", file.display()))?;
     Ok(file)
 }

@@ -132,7 +132,7 @@ export interface Transform {
 }
 
 export interface Anim {
-  property: "x" | "y" | "opacity";
+  property: "x" | "y" | "width" | "height" | "opacity";
   from: number;
   to: number;
   /** Seconds relative to the clip's own start. */

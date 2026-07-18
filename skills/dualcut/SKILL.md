@@ -48,8 +48,9 @@ Or write the JSON directly (validate against the schema). Minimal shape:
 
 Clip types: `text` · `video`/`audio` (src, offset, volume) · `image` ·
 `shape` (rect|circle|ellipse|star|polygon|line|arrow, GPU-rendered) ·
-`compref` (instantiate a def with args) · `test`.
-Animations: `{property: x|y|opacity, from, to, start, end, easing}`.
+`compref` (instantiate a def with args) · `test`. A `video` clip's src may
+be a live vector source: `vello://star?fill=%23ff5470&w=200&h=200&spin=1`.
+Animations: `{property: x|y|width|height|opacity, from, to, start, end, easing}`.
 Detach audio = set video `volume: 0` + add an `audio` clip with same src.
 
 ## Drive a running app (HTTP, port 7357)

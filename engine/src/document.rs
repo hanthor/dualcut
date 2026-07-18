@@ -193,6 +193,8 @@ pub struct Anim {
 pub enum AnimProperty {
     X,
     Y,
+    Width,
+    Height,
     Opacity,
 }
 

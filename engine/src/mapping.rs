@@ -261,6 +261,8 @@ fn apply_transform_and_animations(
             AnimProperty::Opacity => "alpha",
             AnimProperty::X => "posx",
             AnimProperty::Y => "posy",
+            AnimProperty::Width => "width",
+            AnimProperty::Height => "height",
         };
         by_prop.entry(prop).or_default().push(anim);
     }

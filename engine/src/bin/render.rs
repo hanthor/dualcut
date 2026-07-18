@@ -17,6 +17,56 @@ fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let first = args.next().unwrap_or_else(|| "out.mp4".into());
 
+    // `render vellotest` proves the live vector source end-to-end.
+    #[cfg(feature = "vector")]
+    if first == "vellotest" {
+        use gst::prelude::*;
+        dualcut_engine::vellosrc::register().context("registering vellosrc")?;
+
+        // 1. Direct pipeline: spinning star, 10 frames to PNGs.
+        let src = gst::Element::make_from_uri(
+            gst::URIType::Src,
+            "vello://star?fill=%23ffd700&w=220&h=220&spin=1",
+            None,
+        )
+        .context("making vellosrc from uri")?;
+        src.set_property("num-buffers", 10i32);
+        let convert = gst::ElementFactory::make("videoconvert").build()?;
+        let enc = gst::ElementFactory::make("pngenc").build()?;
+        let sink = gst::ElementFactory::make("multifilesink")
+            .property("location", "out/vs-%02d.png")
+            .build()?;
+        let pipeline = gst::Pipeline::new();
+        pipeline.add_many([&src, &convert, &enc, &sink])?;
+        gst::Element::link_many([&src, &convert, &enc, &sink])?;
+        pipeline.set_state(gst::State::Playing)?;
+        let bus = pipeline.bus().unwrap();
+        for msg in bus.iter_timed(gst::ClockTime::from_seconds(30)) {
+            use gst::MessageView;
+            match msg.view() {
+                MessageView::Eos(_) => break,
+                MessageView::Error(e) => anyhow::bail!("pipeline error: {}", e.error()),
+                _ => {}
+            }
+        }
+        pipeline.set_state(gst::State::Null)?;
+        println!("vellosrc via URI handler: 10 frames -> out/vs-*.png");
+
+        // 2. GES UriClip with a vello:// URI.
+        let timeline = ges::Timeline::new_audio_video();
+        let layer = timeline.append_layer();
+        match ges::UriClip::new("vello://circle?fill=%235dd39e&w=300&h=300") {
+            Ok(clip) => {
+                clip.set_start(gst::ClockTime::ZERO);
+                clip.set_duration(gst::ClockTime::from_seconds(2));
+                layer.add_clip(&clip)?;
+                println!("GES UriClip(vello://) accepted");
+            }
+            Err(e) => println!("GES UriClip(vello://) rejected: {e} (bridge documented on #7)"),
+        }
+        return Ok(());
+    }
+
     // `render new <project.json> [title]` scaffolds a starter project.
     if first == "new" {
         let path = args.next().unwrap_or_else(|| "project.json".into());

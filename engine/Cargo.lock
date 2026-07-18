@@ -1256,6 +1256,7 @@ dependencies = [
  "gst-plugin-gtk4",
  "gstreamer",
  "gstreamer-app",
+ "gstreamer-base",
  "gstreamer-controller",
  "gstreamer-editing-services",
  "gstreamer-pbutils",
@@ -1267,6 +1268,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tiny_http",
+ "url",
  "vello",
 ]
 

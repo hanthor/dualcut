@@ -22,10 +22,14 @@ pub mod templates;
 pub mod scripting;
 #[cfg(feature = "vector")]
 pub mod vector;
+#[cfg(feature = "vector")]
+pub mod vellosrc;
 
 pub fn init() -> Result<()> {
     gst::init().context("initializing GStreamer")?;
     ges::init().context("initializing GES")?;
+    #[cfg(feature = "vector")]
+    vellosrc::register().context("registering vellosrc")?;
     Ok(())
 }
 
