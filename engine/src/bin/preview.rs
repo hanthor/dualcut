@@ -262,32 +262,108 @@ impl Editor {
             button.connect_clicked(move |_| {
                 seek_to(&this.state.borrow().pipeline, offset);
             });
-            scene_row.append(&button);
+
+            // Scene cell: block + reorder arrows.
+            let cell = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            cell.append(&button);
+            let arrows = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            arrows.set_halign(gtk::Align::Center);
+            for (glyph, delta) in [("‹", -1i64), ("›", 1i64)] {
+                let target = i as i64 + delta;
+                if target < 0 || target >= project.scenes.len() as i64 {
+                    continue;
+                }
+                let b = gtk::Button::with_label(glyph);
+                b.add_css_class("flat");
+                b.set_tooltip_text(Some("Reorder scene"));
+                let this = self.clone();
+                let project_snapshot = project.clone();
+                b.connect_clicked(move |_| {
+                    let mut project = project_snapshot.clone();
+                    project.scenes.swap(i, target as usize);
+                    this.commit_document(project);
+                });
+                arrows.append(&b);
+            }
+            cell.append(&arrows);
+            scene_row.append(&cell);
         }
         ui.strip.append(&scene_row);
 
         for track in &project.overlays {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             let name = if track.name.is_empty() { &track.id } else { &track.name };
             let tag = gtk::Label::new(Some(&format!("〜 {name}")));
             tag.add_css_class("dim-label");
+            tag.set_width_chars(14);
             row.append(&tag);
+
+            let lane = gtk::Fixed::new();
+            lane.set_size_request((project.duration() * SCENE_PX_PER_SEC) as i32 + 40, 30);
             for clip in &track.clips {
                 let button = gtk::Button::with_label(&clip.id);
                 button.add_css_class("flat");
-                let start = clip.start;
-                let this = self.clone();
-                let id = clip.id.clone();
-                button.connect_clicked(move |_| {
-                    {
-                        let mut st = this.state.borrow_mut();
-                        seek_to(&st.pipeline, start);
-                        st.selected = Some(id.clone());
-                    }
-                    this.rebuild_inspector();
-                });
-                row.append(&button);
+                button.set_size_request(
+                    ((clip.duration * SCENE_PX_PER_SEC) as i32).max(30),
+                    28,
+                );
+                button.set_tooltip_text(Some("Drag to move; click to select"));
+                lane.put(&button, clip.start * SCENE_PX_PER_SEC, 1.0);
+
+                {
+                    let this = self.clone();
+                    let id = clip.id.clone();
+                    let start = clip.start;
+                    button.connect_clicked(move |_| {
+                        {
+                            let mut st = this.state.borrow_mut();
+                            seek_to(&st.pipeline, start);
+                            st.selected = Some(id.clone());
+                        }
+                        this.rebuild_inspector();
+                    });
+                }
+
+                // Drag horizontally to retime; snaps to scene boundaries
+                // and the half-second grid on release.
+                let drag = gtk::GestureDrag::new();
+                let orig_x = Rc::new(std::cell::Cell::new(clip.start * SCENE_PX_PER_SEC));
+                {
+                    let orig_x = orig_x.clone();
+                    let start = clip.start;
+                    drag.connect_drag_begin(move |_, _, _| {
+                        orig_x.set(start * SCENE_PX_PER_SEC);
+                    });
+                }
+                {
+                    let lane = lane.clone();
+                    let button = button.clone();
+                    let orig_x = orig_x.clone();
+                    drag.connect_drag_update(move |_, dx, _| {
+                        lane.move_(&button, (orig_x.get() + dx).max(0.0), 1.0);
+                    });
+                }
+                {
+                    let this = self.clone();
+                    let id = clip.id.clone();
+                    let orig_x = orig_x.clone();
+                    let project_snapshot = project.clone();
+                    drag.connect_drag_end(move |_, dx, _| {
+                        if dx.abs() < 2.0 {
+                            return; // treat as click
+                        }
+                        let raw = ((orig_x.get() + dx).max(0.0)) / SCENE_PX_PER_SEC;
+                        let snapped = snap_time(&project_snapshot, raw);
+                        let mut project = project_snapshot.clone();
+                        if let Some(c) = find_clip_mut(&mut project, &id) {
+                            c.start = snapped;
+                        }
+                        this.commit_document(project);
+                    });
+                }
+                button.add_controller(drag);
             }
+            row.append(&lane);
             ui.strip.append(&row);
         }
     }
@@ -731,6 +807,27 @@ fn scene_thumb(
         }
     }
     None
+}
+
+/// Snap a time to scene boundaries or the half-second grid (0.15s window).
+fn snap_time(project: &Project, raw: f64) -> f64 {
+    const WINDOW: f64 = 0.15;
+    let mut candidates: Vec<f64> = (0..=project.scenes.len())
+        .map(|i| {
+            if i == project.scenes.len() {
+                project.duration()
+            } else {
+                project.scene_offset(i)
+            }
+        })
+        .collect();
+    candidates.push((raw * 2.0).round() / 2.0);
+    candidates
+        .into_iter()
+        .filter(|c| (c - raw).abs() <= WINDOW)
+        .min_by(|a, b| (a - raw).abs().total_cmp(&(b - raw).abs()))
+        .unwrap_or(raw)
+        .max(0.0)
 }
 
 fn media_uri(src: &str, base_dir: &std::path::Path) -> Option<String> {
