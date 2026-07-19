@@ -219,6 +219,10 @@ pub enum Element {
         offset: f64,
         #[serde(default = "default_volume")]
         volume: f64,
+        /// Playback speed multiplier (0.1–10; 1.0 = normal). Duration
+        /// stays in timeline seconds; media consumed = duration x rate.
+        #[serde(default = "default_rate", skip_serializing_if = "is_default_rate")]
+        rate: f64,
     },
     Audio {
         src: String,
@@ -226,6 +230,9 @@ pub enum Element {
         offset: f64,
         #[serde(default = "default_volume")]
         volume: f64,
+        /// Playback speed multiplier (0.1–10; 1.0 = normal).
+        #[serde(default = "default_rate", skip_serializing_if = "is_default_rate")]
+        rate: f64,
     },
     Image {
         src: String,
@@ -455,6 +462,10 @@ impl Clip {
                 }
             }
         }
+        if let Element::Video { rate, .. } | Element::Audio { rate, .. } = &self.element
+            && !(0.1..=10.0).contains(rate) {
+                bail!("clip {:?}: rate must be 0.1-10", self.id);
+            }
         for effect in &self.effects {
             match effect {
                 Effect::Blur { amount } => {
@@ -509,6 +520,12 @@ fn default_font() -> String {
 }
 fn default_color() -> String {
     "#ffffff".into()
+}
+fn default_rate() -> f64 {
+    1.0
+}
+fn is_default_rate(r: &f64) -> bool {
+    (*r - 1.0).abs() < f64::EPSILON
 }
 fn default_volume() -> f64 {
     1.0
@@ -755,7 +772,7 @@ pub fn detach_audio(project: &mut Project, id: &str) -> Option<String> {
     let (src, offset, volume, start, duration) = {
         let clip = find_clip(project, id)?;
         match &clip.element {
-            Element::Video { src, offset, volume } => {
+            Element::Video { src, offset, volume, .. } => {
                 (src.clone(), *offset, *volume, clip.start, clip.duration)
             }
             _ => return None,
@@ -779,7 +796,7 @@ pub fn detach_audio(project: &mut Project, id: &str) -> Option<String> {
         id: new_id.clone(),
         start: abs_start,
         duration,
-        element: Element::Audio { src, offset, volume },
+        element: Element::Audio { src, offset, volume, rate: 1.0 },
         transform: Default::default(),
         animations: Vec::new(),
         effects: Vec::new(),

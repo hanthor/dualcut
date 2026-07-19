@@ -178,13 +178,37 @@ impl Editor {
         }
     }
 
+    /// GES pipelines are single-timeline (ADR 0001): a rebuilt timeline
+    /// needs a fresh pipeline, with position carried over and the
+    /// preview picture repointed at the new sink's paintable.
+    fn swap_pipeline(self: &Rc<Self>, timeline: &ges::Timeline) {
+        let (old, pos) = {
+            let st = self.state.borrow();
+            let pos = st
+                .pipeline
+                .query_position::<gst::ClockTime>()
+                .map(|p| p.nseconds() as f64 / 1e9)
+                .unwrap_or(0.0);
+            (st.pipeline.clone(), pos)
+        };
+        let _ = old.set_state(gst::State::Null);
+        match make_pipeline(timeline) {
+            Ok((pipeline, paintable)) => {
+                if let Some(ui) = self.ui.borrow().as_ref() {
+                    ui.picture.set_paintable(Some(&paintable));
+                }
+                let _ = start_paused(&pipeline);
+                seek_to(&pipeline, pos);
+                self.state.borrow_mut().pipeline = pipeline;
+            }
+            Err(e) => eprintln!("pipeline rebuild failed: {e:#}"),
+        }
+    }
+
     fn rebuild_in_memory(self: &Rc<Self>, project: Project) {
         match compile_project(&project, &self.base_dir()) {
             Ok(timeline) => {
-                {
-                    let st = self.state.borrow();
-                    let _ = st.pipeline.set_timeline(&timeline);
-                }
+                self.swap_pipeline(&timeline);
                 self.state.borrow_mut().project = Some(project);
                 self.rebuild_strip();
                 self.rebuild_inspector();
@@ -951,9 +975,9 @@ impl Editor {
         let element = match ext.as_str() {
             "png" | "jpg" | "jpeg" | "webp" => document::Element::Image { src: rel.to_string() },
             "ogg" | "mp3" | "wav" | "flac" => {
-                document::Element::Audio { src: rel.to_string(), offset: 0.0, volume: 1.0 }
+                document::Element::Audio { src: rel.to_string(), offset: 0.0, volume: 1.0, rate: 1.0 }
             }
-            _ => document::Element::Video { src: rel.to_string(), offset: 0.0, volume: 1.0 },
+            _ => document::Element::Video { src: rel.to_string(), offset: 0.0, volume: 1.0, rate: 1.0 },
         };
         let mut id_base = rel
             .chars()

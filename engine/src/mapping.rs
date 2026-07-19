@@ -191,8 +191,8 @@ fn add_clip(
             }
             Some(title.upcast())
         }
-        Element::Video { src, offset: inpoint, volume }
-        | Element::Audio { src, offset: inpoint, volume } => {
+        Element::Video { src, offset: inpoint, volume, rate }
+        | Element::Audio { src, offset: inpoint, volume, rate } => {
             let uri = to_uri(src, base_dir)?;
             let media = ges::UriClip::new(&uri).with_context(|| format!("opening {src}"))?;
             media.set_start(start);
@@ -202,6 +202,19 @@ fn add_clip(
                 media.set_supported_formats(ges::TrackType::AUDIO);
             }
             layer.add_clip(&media)?;
+            // Speed (#32): GES auto-registers pitch/videorate rate
+            // properties and drives nle's media consumption itself
+            // (verified by reproducer; see issue).
+            if (*rate - 1.0).abs() > f64::EPSILON {
+                let pitch = ges::Effect::new(&format!("pitch tempo={rate}"))
+                    .context("pitch effect (rate)")?;
+                media.add(&pitch).context("adding pitch rate effect")?;
+                if matches!(clip.element, Element::Video { .. }) {
+                    let vrate = ges::Effect::new(&format!("videorate rate={rate}"))
+                        .context("videorate effect")?;
+                    media.add(&vrate).context("adding videorate effect")?;
+                }
+            }
             // Volume rides an explicit effect; GES's own child-property
             // route scales values wrongly on this GStreamer (see ADR).
             let animates_volume =

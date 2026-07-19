@@ -22,7 +22,7 @@ pub fn thumbnail_png(cache_dir: &Path, uri: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(cache_dir)?;
 
     let pipeline = gst::parse::launch(&format!(
-        "uridecodebin uri={uri} ! videoconvert ! videoscale ! \
+        "uridecodebin uri=\"{uri}\" ! videoconvert ! videoscale ! \
          video/x-raw,format=RGB,width={W},height={H},pixel-aspect-ratio=1/1 ! \
          appsink name=sink sync=false"
     ))?
@@ -79,7 +79,7 @@ pub fn waveform_png(cache_dir: &Path, uri: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(cache_dir)?;
 
     let pipeline = gst::parse::launch(&format!(
-        "uridecodebin uri={uri} ! audioconvert ! audioresample ! \
+        "uridecodebin uri=\"{uri}\" ! audioconvert ! audioresample ! \
          audio/x-raw,format=F32LE,channels=1,rate=8000 ! \
          appsink name=sink sync=false"
     ))?
