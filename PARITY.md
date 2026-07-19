@@ -56,7 +56,7 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Title templates | ✅ | ✅ | ✅ | ✅ (defs + thumbnails) | ✅ |
 | Parameterised/nested templates | 🟡 | ❌ | ❌ | ✅ | ✅ (defs nest) |
 | Save selection as template | 🟡 | ❌ | 🟡 | ✅ | ✅ |
-| Auto-captions (STT) | ✅ | ❌ | 🟡 | ❌ | ❌ |
+| Auto-captions (STT) | ✅ | ❌ | 🟡 | 🟡 (needs local whisper.cpp + model) | 🟡 (recipe via agent surface) |
 
 ## Audio
 
@@ -99,5 +99,6 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 3. **Track mute/solo/hide** toggles on lanes.
 4. **Masks / chroma key** — needs engine work (frei0r or custom).
 5. **Speed ramping** — GES supports rate; unexposed in the document.
-6. **Auto-captions** — pairs naturally with the agent surface (STT →
-   subtitle overlay track).
+6. **Auto-captions** — *Generate Captions…* in the menu drives a local
+   whisper.cpp install (#37); the remaining gap is bundling STT so it
+   works out of the box.
