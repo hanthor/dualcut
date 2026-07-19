@@ -56,7 +56,7 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Title templates | ✅ | ✅ | ✅ | ✅ (defs + thumbnails) | ✅ |
 | Parameterised/nested templates | 🟡 | ❌ | ❌ | ✅ | ✅ (defs nest) |
 | Save selection as template | 🟡 | ❌ | 🟡 | ✅ | ✅ |
-| Auto-captions (STT) | ✅ | ❌ | 🟡 | 🟡 (needs local whisper.cpp + model) | 🟡 (recipe via agent surface) |
+| Auto-captions (STT) | ✅ | ❌ | 🟡 | ✅ (bundled whisper.cpp + model in the Flatpak, #37) | 🟡 (recipe via agent surface) |
 
 ## Audio
 
@@ -97,9 +97,14 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 1. **Keyframed speed ramps** — constant rate ships; ramping needs
    clip segmentation (#40), not live GES property binding (unsafe,
    root-caused).
-2. **Auto-captions bundling** — *Generate Captions…* in the menu and
-   the agent recipe both drive a local whisper.cpp install (#37); the
-   remaining gap is bundling STT so it works out of the box.
+2. **Auto-captions bundling** — closed for the Flatpak (#37): the
+   manifest builds a CPU-only whisper.cpp (`whisper-cli`, static,
+   no CUDA/Metal/BLAS) and bundles a ggml tiny.en q5_1 model
+   (~31MB), so *Generate Captions…* works with no external install.
+   `DUALCUT_WHISPER_MODEL` still overrides with a bigger/different
+   model. Non-Flatpak builds still need a whisper.cpp install on
+   PATH — a future "download a better model" option could layer
+   on top of the bundled default.
 3. **Bezier masks** — chroma key + rectangular crop ship; freeform
    masks need a compositor story.
 4. **Full color grading** — basic balance only; curves/wheels are a

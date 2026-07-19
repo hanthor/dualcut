@@ -2446,9 +2446,23 @@ fn export_target(dir: &std::path::Path, name: &str) -> String {
 /// Kicks off (or queues) one render: (Export button, output path, profile).
 type StartRender = Rc<dyn Fn(gtk::Button, String, String)>;
 
-/// Locate a whisper.cpp CLI on PATH (#37): `whisper-cli` (current name)
-/// first, then the older `whisper-cpp`.
+/// The bundled whisper-cli binary shipped by the Flatpak (`whisper-cpp`
+/// module in the manifest), checked before falling back to PATH.
+const BUNDLED_WHISPER_CLI: &str = "/app/bin/whisper-cli";
+
+/// The bundled ggml model shipped by the Flatpak (`whisper-model`
+/// module in the manifest), used when `DUALCUT_WHISPER_MODEL` is unset.
+const BUNDLED_WHISPER_MODEL: &str = "/app/share/dualcut/models/ggml-tiny.en-q5_1.bin";
+
+/// Locate a whisper.cpp CLI: the Flatpak-bundled `/app/bin/whisper-cli`
+/// first (so captions work out of the box in the Flatpak build), then
+/// PATH (#37): `whisper-cli` (current name), then the older
+/// `whisper-cpp`, for users with their own install.
 fn find_whisper() -> Option<PathBuf> {
+    let bundled = PathBuf::from(BUNDLED_WHISPER_CLI);
+    if bundled.is_file() {
+        return Some(bundled);
+    }
     let path = std::env::var_os("PATH")?;
     for name in ["whisper-cli", "whisper-cpp"] {
         for dir in std::env::split_paths(&path) {
@@ -2457,6 +2471,22 @@ fn find_whisper() -> Option<PathBuf> {
                 return Some(candidate);
             }
         }
+    }
+    None
+}
+
+/// Resolve the whisper model path: `DUALCUT_WHISPER_MODEL` if set,
+/// otherwise the Flatpak-bundled model if present on disk.
+fn find_whisper_model() -> Option<String> {
+    if let Some(m) = std::env::var("DUALCUT_WHISPER_MODEL")
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+    {
+        return Some(m);
+    }
+    let bundled = PathBuf::from(BUNDLED_WHISPER_MODEL);
+    if bundled.is_file() {
+        return Some(bundled.to_string_lossy().into_owned());
     }
     None
 }
@@ -2581,9 +2611,9 @@ fn show_captions_dialog(editor: &Rc<Editor>) {
         Some(&format!(
             "Dualcut exports the project audio, transcribes it locally with \
              {whisper_name}, and adds the segments as text clips on a \
-             Subtitles overlay track.\n\nThe model comes from the \
-             DUALCUT_WHISPER_MODEL environment variable (path to a ggml \
-             model file)."
+             Subtitles overlay track.\n\nUses the bundled speech model by \
+             default; set the DUALCUT_WHISPER_MODEL environment variable \
+             to a ggml model file to use a different one."
         )),
     );
     dialog.add_response("cancel", "Cancel");
@@ -2592,11 +2622,10 @@ fn show_captions_dialog(editor: &Rc<Editor>) {
     dialog.set_default_response(Some("generate"));
     let this = editor.clone();
     dialog.connect_response(Some("generate"), move |_, _| {
-        let model = std::env::var("DUALCUT_WHISPER_MODEL")
-            .ok()
-            .filter(|m| !m.trim().is_empty());
-        let Some(model) = model else {
-            this.toast("Set DUALCUT_WHISPER_MODEL to a whisper ggml model path first");
+        let Some(model) = find_whisper_model() else {
+            this.toast(
+                "No whisper model found; set DUALCUT_WHISPER_MODEL to a ggml model path",
+            );
             return;
         };
         this.toast("Transcribing… captions will appear when ready");

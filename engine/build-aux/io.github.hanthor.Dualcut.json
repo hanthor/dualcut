@@ -152,6 +152,43 @@
       ]
     },
     {
+      "name": "whisper-cpp",
+      "//": "CPU-only whisper.cpp build (#37): local speech-to-text for",
+      "//2": "Generate Captions, no GPU/BLAS backend so it has no deps",
+      "//3": "beyond a C/C++ toolchain + the ninja/cmake already used above.",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_BLAS=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF -DWHISPER_SDL2=OFF -DWHISPER_CURL=OFF",
+        "cmake --build build --target whisper-cli -j $FLATPAK_BUILDER_N_JOBS",
+        "install -Dm755 build/bin/whisper-cli /app/bin/whisper-cli"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/ggml-org/whisper.cpp.git",
+          "commit": "f049fff95a089aa9969deb009cdd4892b3e74916",
+          "tag": "v1.9.1"
+        }
+      ]
+    },
+    {
+      "name": "whisper-model",
+      "//": "Bundled ggml tiny.en q5_1 model (#37): smallest usable",
+      "//2": "English model (~31MB) so captions work with no extra download.",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm644 ggml-tiny.en-q5_1.bin /app/share/dualcut/models/ggml-tiny.en-q5_1.bin"
+      ],
+      "sources": [
+        {
+          "type": "file",
+          "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin",
+          "sha256": "c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b",
+          "dest-filename": "ggml-tiny.en-q5_1.bin"
+        }
+      ]
+    },
+    {
       "name": "dualcut",
       "buildsystem": "simple",
       "build-commands": [

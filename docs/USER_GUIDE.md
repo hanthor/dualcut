@@ -90,13 +90,16 @@ automatically.
 ## Menu
 
 The hamburger menu holds *New Project*, *Save Project As…*, *Generate
-Captions…* (transcribes the project audio with a local whisper.cpp
-binary — `whisper-cli` or `whisper-cpp` on your PATH, model set via
-`DUALCUT_WHISPER_MODEL` — and lands the segments as styled text clips
-on a Subtitles overlay track; greyed out when no whisper binary is
-installed), *Install Agent Skills…* (sets up the dualcut skill for
-coding agents in `~/.agents/skills`, `~/.claude/skills`, or a
-directory of your choice), and *About*.
+Captions…* (transcribes the project audio locally with whisper.cpp and
+lands the segments as styled text clips on a Subtitles overlay track —
+works out of the box in the Flatpak, which bundles a `whisper-cli`
+binary and a small English speech model; set `DUALCUT_WHISPER_MODEL` to
+a different ggml model path to use one other than the bundled tiny.en;
+outside the Flatpak, install `whisper-cli`/`whisper-cpp` on your PATH
+and set `DUALCUT_WHISPER_MODEL` — the action is greyed out until a
+whisper binary and model are found), *Install Agent Skills…* (sets up
+the dualcut skill for coding agents in `~/.agents/skills`,
+`~/.claude/skills`, or a directory of your choice), and *About*.
 
 ![About](guide/about.png)
 

@@ -1,8 +1,16 @@
 # Recipe: auto-captions with local STT (#37)
 
 Transcribe a clip's audio with any local speech-to-text tool and land
-the segments as styled text clips on a `subtitles` overlay track. No ML
-ships in dualcut — the agent surface is the integration point.
+the segments as styled text clips on a `subtitles` overlay track. This
+recipe is the integration point for headless/agent workflows driving
+the HTTP API from outside the app.
+
+The GUI's *Generate Captions…* menu action (#37) is a separate, simpler
+path for interactive use: the Flatpak build bundles a CPU-only
+whisper.cpp (`/app/bin/whisper-cli`) and a small ggml model
+(`/app/share/dualcut/models/ggml-tiny.en-q5_1.bin`), so it works with
+no install. `DUALCUT_WHISPER_MODEL` overrides the model path for either
+the bundled or a self-installed whisper-cli.
 
 ## 1. Extract the audio
 
