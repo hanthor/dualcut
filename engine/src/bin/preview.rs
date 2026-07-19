@@ -859,10 +859,14 @@ impl Editor {
                     queue_proxy(&uri, &mut proxies);
                 }
                 if is_audio {
-                    if !cache.join(format!("wave-{:016x}.png", fx_hash(&uri))).exists() {
+                    if !cache.join(format!("wave-{:016x}.png", fx_hash(&uri))).exists()
+                        && !failed_thumbs().lock().unwrap().contains(&uri)
+                    {
                         waves.push(uri);
                     }
-                } else if !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists() {
+                } else if !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists()
+                    && !failed_thumbs().lock().unwrap().contains(&uri)
+                {
                     thumbs.push(uri);
                 }
             }
@@ -872,22 +876,28 @@ impl Editor {
                 document::Element::Video { src, .. } => {
                     if let Some(uri) = media_uri(src, &base_dir) {
                         queue_proxy(&uri, &mut proxies);
-                        if !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists() {
+                        if !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists()
+                            && !failed_thumbs().lock().unwrap().contains(&uri)
+                        {
                             thumbs.push(uri);
                         }
                     }
                 }
                 document::Element::Image { src } => {
                     if let Some(uri) = media_uri(src, &base_dir)
-                        && !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists() {
-                            thumbs.push(uri);
-                        }
+                        && !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists()
+                        && !failed_thumbs().lock().unwrap().contains(&uri)
+                    {
+                        thumbs.push(uri);
+                    }
                 }
                 document::Element::Audio { src, .. } => {
                     if let Some(uri) = media_uri(src, &base_dir)
-                        && !cache.join(format!("wave-{:016x}.png", fx_hash(&uri))).exists() {
-                            waves.push(uri);
-                        }
+                        && !cache.join(format!("wave-{:016x}.png", fx_hash(&uri))).exists()
+                        && !failed_thumbs().lock().unwrap().contains(&uri)
+                    {
+                        waves.push(uri);
+                    }
                 }
                 _ => {}
             }
@@ -916,6 +926,7 @@ impl Editor {
             for uri in thumbs {
                 if let Err(e) = dualcut_engine::thumbs::thumbnail_png(&cache, &uri) {
                     eprintln!("thumbnail failed for {uri}: {e:#}");
+                    failed_thumbs().lock().unwrap().insert(uri);
                 }
             }
             let mut made_proxies = false;
@@ -943,6 +954,7 @@ impl Editor {
             for uri in waves {
                 if let Err(e) = dualcut_engine::thumbs::waveform_png(&cache, &uri) {
                     eprintln!("waveform failed for {uri}: {e:#}");
+                    failed_thumbs().lock().unwrap().insert(uri);
                 }
             }
             let _ = tx.send(made_proxies);
@@ -2157,6 +2169,12 @@ fn snap_time(project: &Project, raw: f64) -> f64 {
 }
 
 /// Proxy transcodes that failed this session — skipped on later rebuilds.
+fn failed_thumbs() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static SET: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    SET.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
 fn failed_proxies() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
     static FAILED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
         std::sync::OnceLock::new();
