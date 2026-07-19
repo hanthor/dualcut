@@ -25,12 +25,12 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Scene/section grouping | ❌ | ❌ | ❌ | ✅ (ruler) | ✅ |
 | Drag to move / retime | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Edge trim | ✅ | ✅ | ✅ | ✅ (right edge) | ✅ |
-| Split at playhead | ✅ | ✅ | ✅ | ❌ | 🟡 (script can) |
+| Split at playhead | ✅ | ✅ | ✅ | ✅ (S key) | ✅ |
 | Snapping | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Zoom | ✅ | ✅ | ✅ | ✅ | — |
 | Playhead indicator | ✅ | ✅ | ✅ | ✅ | — |
-| Ripple/roll/slip edits | ✅ | 🟡 | ✅ | ❌ | ❌ |
-| Track mute/hide toggles | ✅ | ✅ | ✅ | ❌ | 🟡 (volume/opacity) |
+| Ripple/roll/slip edits | ✅ | 🟡 | ✅ | ✅ (ripple delete) | ✅ |
+| Track mute/hide toggles | ✅ | ✅ | ✅ | ✅ (overlay tracks) | ✅ |
 
 ## Editing & compositing
 
@@ -43,8 +43,8 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Scene transitions (wipes etc.) | ✅ | ✅ | ✅ | ✅ (6 kinds) | ✅ |
 | Effects (blur, color) | ✅ | 🟡 | ✅ | ✅ | ✅ |
 | Full color grading | ✅ | 🟡 | ✅ | ❌ | 🟡 (videobalance) |
-| Masks / chroma key | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Speed ramping | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Masks / chroma key | ✅ | ✅ | ✅ | ✅ (chroma key + crop) | ✅ |
+| Speed ramping | ✅ | ✅ | ✅ | 🟡 (constant rate; ramping later) | ✅ |
 | Vector shapes | 🟡 (stickers) | ❌ | 🟡 | ✅ (7 shapes, live GPU) | ✅ (`vello://`) |
 
 ## Text & templates
@@ -52,7 +52,7 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Feature | CapCut Desktop | iMovie | Kdenlive | Dualcut GUI | Dualcut Backend |
 |---|---|---|---|---|---|
 | Text clips | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Rich text styling | ✅ | 🟡 | ✅ | 🟡 (font/color) | 🟡 |
+| Rich text styling | ✅ | 🟡 | ✅ | ✅ (align/outline/shadow) | ✅ |
 | Title templates | ✅ | ✅ | ✅ | ✅ (defs + thumbnails) | ✅ |
 | Parameterised/nested templates | 🟡 | ❌ | ❌ | ✅ | ✅ (defs nest) |
 | Save selection as template | 🟡 | ❌ | 🟡 | ✅ | ✅ |
@@ -67,7 +67,7 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Volume keyframes/fades | ✅ | ✅ | ✅ | ✅ (presets + keyframes) | ✅ |
 | Detach audio from video | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Auto-crossfade at cuts | ✅ | ✅ | 🟡 | ✅ | ✅ |
-| Audio effects (EQ, denoise) | ✅ | 🟡 | ✅ | ❌ | ❌ |
+| Audio effects (EQ, denoise) | ✅ | 🟡 | ✅ | ✅ (EQ + compressor) | ✅ |
 
 ## Export
 
@@ -78,8 +78,8 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | ProRes / lossless (FFV1) | ❌ | ✅ (ProRes) | ✅ | ✅ | ✅ |
 | Audio-only export | ✅ | ✅ | ✅ | ✅ (5 formats) | ✅ |
 | Overwrite guard, dir picker | ✅ | ✅ | ✅ | ✅ | — |
-| Render progress | ✅ | ✅ | ✅ | 🟡 (busy state) | — |
-| Background render queue | ✅ | ❌ | ✅ | ❌ | 🟡 (HTTP `/render`) |
+| Render progress | ✅ | ✅ | ✅ | ✅ (live bar) | ✅ (callback) |
+| Background render queue | ✅ | ❌ | ✅ | ✅ (sequential queue) | 🟡 (HTTP `/render`) |
 
 ## Automation (Dualcut's home turf)
 
@@ -92,11 +92,15 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Agent skill / docs for AI edits | ❌ | ❌ | ❌ | ✅ (installer) | ✅ |
 | Headless render CLI | ❌ | ❌ | ✅ (melt) | — | ✅ |
 
-## Biggest gaps to close (GUI-first)
+## Remaining gaps
 
-1. **Split at playhead** — the most-used edit primitive we lack (#21).
-2. **Track mute/solo/hide** toggles on lanes.
-3. **Masks / chroma key** — needs engine work (frei0r or custom).
-4. **Speed ramping** — GES supports rate; unexposed in the document.
-5. **Auto-captions** — pairs naturally with the agent surface (STT →
-   subtitle overlay track).
+1. **Speed ramping** — constant rate shipped; keyframed curves are a
+   follow-up.
+2. **Auto-captions GUI** — agent recipe + in-app "Generate Captions"
+   (requires a local whisper.cpp binary) both ship; fully bundled STT
+   is future work.
+3. **Bezier masks** — chroma key + rectangular crop ship; freeform
+   masks need a compositor story.
+4. **Denoise** — EQ + compressor ship; needs a flatpak-viable plugin.
+5. **Full color grading** — basic balance only; curves/wheels are a
+   bigger project.
