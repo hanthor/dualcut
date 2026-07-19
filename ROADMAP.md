@@ -1,6 +1,6 @@
 # Roadmap — native, GPU-accelerated rewrite
 
-The current web prototype (this repo's Vite app) stays as the v0 reference
+The v0 web prototype (Vite/React) has been removed from the tree — see git history (tag v0.13.0 and earlier) for the reference implementation
 for UX and the dual-editing sync model. The next phase moves rendering and
 media off the DOM entirely.
 

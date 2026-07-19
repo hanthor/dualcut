@@ -66,9 +66,3 @@ for the canonical dependency list.
 Roadmap and status: [ROADMAP.md](ROADMAP.md) ·
 open work: [issues](https://github.com/hanthor/dualcut/issues)
 
-## v0 web prototype (reference)
-
-The original browser prototype (Vite + React, `src/`) established the
-dual-editing model and stays as a reference: `npm install && npm run dev`,
-then edit `composition.json` or `GET/POST /__composition`. Superseded by
-the native app; kept until the native timeline reaches full parity (#2).
