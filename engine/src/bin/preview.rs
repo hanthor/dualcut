@@ -2654,6 +2654,12 @@ add files to import first"));
         .default_height(700)
         .content(&toasts)
         .build();
+    // Headless walkthrough runs without a window manager, so maximize()
+    // would be ignored; fill the virtual screen explicitly so the guide
+    // screenshots have no dead space.
+    if std::env::var("DUALCUT_WALKTHROUGH").is_ok() {
+        window.set_default_size(1280, 800);
+    }
 
     {
         let controller = gtk::EventControllerKey::new();
