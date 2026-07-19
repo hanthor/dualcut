@@ -41,6 +41,11 @@
     <color type="primary" scheme_preference="dark">#2a3350</color>
   </branding>
   <releases>
+    <release version="0.18.1" date="2026-07-19">
+      <description>
+        <p>Preview quality setting: preview renders at Half resolution by default (Full/Half/Quarter in Preferences); exports unaffected.</p>
+      </description>
+    </release>
     <release version="0.18.0" date="2026-07-19">
       <description>
         <p>QA round 4: export dialog rework, header polish, Script behind Preferences, InlineViewSwitcher + ShortcutsDialog, MP4-export and Vello crash fixes, PARITY.md.</p>
