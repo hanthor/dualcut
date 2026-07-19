@@ -105,7 +105,11 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
    model. Non-Flatpak builds still need a whisper.cpp install on
    PATH — a future "download a better model" option could layer
    on top of the bundled default.
-3. **Bezier masks** — chroma key + rectangular crop ship; freeform
-   masks need a compositor story.
+3. **Bezier/freeform masks** — chroma key + rectangular crop ship;
+   freeform masks are blocked on a real GES limitation: effect bins
+   reject multi-source pipelines (matte + video composited via
+   alphacombine), confirmed with a pixel-level no-op proof, not a
+   syntax issue. Root cause and fix direction (track/layer-level
+   compositing instead of a GESEffect) on #41.
 4. **Full color grading** — basic balance only; curves/wheels are a
    bigger project.
