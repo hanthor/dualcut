@@ -41,6 +41,11 @@
     <color type="primary" scheme_preference="dark">#2a3350</color>
   </branding>
   <releases>
+    <release version="0.9.0" date="2026-07-19">
+      <description>
+        <p>GUI parity: effects editor, scene transition picker, audio fade presets; template preview thumbnails; verified native audio crossfades.</p>
+      </description>
+    </release>
     <release version="0.8.0" date="2026-07-19">
       <description>
         <p>Volume animation (audio fades/ducking), wipe/iris/clock transitions, blur + color effects, nested defs, Templates tab, live vellosrc properties.</p>
