@@ -220,27 +220,34 @@ impl Editor {
         }
     }
 
+    /// Add file paths to the project library (#15); shared by the Import
+    /// dialog and window drag-and-drop.
+    fn add_to_library(self: &Rc<Self>, paths: &[PathBuf]) {
+        let project = self.state.borrow().project.clone();
+        let Some(mut project) = project else { return };
+        let base = self.base_dir();
+        for path in paths {
+            let entry = path
+                .strip_prefix(&base)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| path.display().to_string());
+            if !project.library.contains(&entry) {
+                project.library.push(entry);
+            }
+        }
+        self.commit_document(project);
+    }
+
     /// Import media files into the project library (#15).
     fn import_media(self: &Rc<Self>, window: Option<&gtk::Window>) {
         let dialog = gtk::FileDialog::builder().title("Import media").build();
         let this = self.clone();
         dialog.open_multiple(window, gtk::gio::Cancellable::NONE, move |res| {
             let Ok(files) = res else { return };
-            let project = this.state.borrow().project.clone();
-            let Some(mut project) = project else { return };
-            let base = this.base_dir();
-            for i in 0..files.n_items() {
-                let Some(file) = files.item(i).and_downcast::<gtk::gio::File>() else { continue };
-                let Some(path) = file.path() else { continue };
-                let entry = path
-                    .strip_prefix(&base)
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| path.display().to_string());
-                if !project.library.contains(&entry) {
-                    project.library.push(entry);
-                }
-            }
-            this.commit_document(project);
+            let paths: Vec<PathBuf> = (0..files.n_items())
+                .filter_map(|i| files.item(i).and_downcast::<gtk::gio::File>()?.path())
+                .collect();
+            this.add_to_library(&paths);
         });
     }
 
@@ -1845,7 +1852,11 @@ fn build_script_panel(editor: &Rc<Editor>) -> gtk::Box {
     page.set_margin_bottom(8);
 
     let hint = gtk::Label::new(Some(
-        "TypeScript — must export edit(project: Project): Project.\nTypes: engine/schema/dualcut.d.ts",
+        "Automate edits with TypeScript. The Code tab is the document \
+itself (JSON); a script here transforms it: it receives the current \
+project and the returned project becomes the new document (undoable). \
+Must export edit(project: Project): Project. \
+Types: engine/schema/dualcut.d.ts",
     ));
     hint.add_css_class("dim-label");
     hint.set_halign(gtk::Align::Start);
@@ -2353,6 +2364,11 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         });
     }
     bar.pack_start(&import_btn);
+    let left_toggle = gtk::ToggleButton::new();
+    left_toggle.set_icon_name("sidebar-show-symbolic");
+    left_toggle.set_tooltip_text(Some("Toggle left panel (Library / Templates / Code / Script)"));
+    left_toggle.set_active(true);
+    bar.pack_start(&left_toggle);
     let timeline_toggle = gtk::ToggleButton::new();
     timeline_toggle.set_icon_name("view-continuous-symbolic");
     timeline_toggle.set_tooltip_text(Some("Toggle timeline pane"));
@@ -2381,6 +2397,11 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     burger.set_icon_name("open-menu-symbolic");
     burger.set_menu_model(Some(&menu));
     bar.pack_end(&burger);
+    let right_toggle = gtk::ToggleButton::new();
+    right_toggle.set_icon_name("sidebar-show-right-symbolic");
+    right_toggle.set_tooltip_text(Some("Toggle inspector panel"));
+    right_toggle.set_active(true);
+    bar.pack_end(&right_toggle);
 
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     transport.set_margin_start(12);
@@ -2398,13 +2419,10 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     strip_scroll.set_child(Some(&strip));
     strip_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
     strip_scroll.set_min_content_height(150);
-    let bottom = gtk::Revealer::new();
-    bottom.set_child(Some(&strip_scroll));
-    bottom.set_reveal_child(true);
-    bottom.set_transition_type(gtk::RevealerTransitionType::SlideUp);
+    // Bottom pane is a resizable Paned child; the toggle hides it.
     {
-        let bottom = bottom.clone();
-        timeline_toggle.connect_toggled(move |b| bottom.set_reveal_child(b.is_active()));
+        let strip_scroll = strip_scroll.clone();
+        timeline_toggle.connect_toggled(move |b| strip_scroll.set_visible(b.is_active()));
     }
 
     // Center: preview + transport.
@@ -2487,6 +2505,11 @@ add files to import first"));
     left_tabs.append_page(&media_scroll, Some(&gtk::Label::new(Some("Library"))));
     left_tabs.append_page(&templates_scroll, Some(&gtk::Label::new(Some("Templates"))));
     left_tabs.append_page(&code_page, Some(&gtk::Label::new(Some("Code"))));
+    #[cfg(feature = "scripting")]
+    {
+        let script_page = build_script_panel(&editor);
+        left_tabs.append_page(&script_page, Some(&gtk::Label::new(Some("Script"))));
+    }
     left_tabs.set_size_request(260, -1);
 
     // Right: parameters (Inspect | Script), as before.
@@ -2496,21 +2519,15 @@ add files to import first"));
     inspector.set_margin_end(8);
     inspector.set_size_request(300, -1);
 
+    // Right sidebar is parameters only; scripting lives with the other
+    // code views in the left notebook.
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let stack = gtk::Stack::new();
-    stack.add_titled(&inspector, Some("inspect"), "Inspect");
-    #[cfg(feature = "scripting")]
-    {
-        let script_page = build_script_panel(&editor);
-        stack.add_titled(&script_page, Some("script"), "Script");
-    }
-    let switcher = gtk::StackSwitcher::new();
-    switcher.set_stack(Some(&stack));
-    switcher.set_halign(gtk::Align::Center);
-    switcher.set_margin_top(6);
-    sidebar.append(&switcher);
-    sidebar.append(&stack);
-    stack.set_vexpand(true);
+    let inspector_scroll = gtk::ScrolledWindow::new();
+    inspector_scroll.set_child(Some(&inspector));
+    inspector_scroll.set_vexpand(true);
+    inspector_scroll.set_min_content_width(280);
+    inspector_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    sidebar.append(&inspector_scroll);
 
     let inner = gtk::Paned::new(gtk::Orientation::Horizontal);
     inner.set_start_child(Some(&center));
@@ -2527,10 +2544,25 @@ add files to import first"));
     outer.set_position(260);
     outer.set_vexpand(true);
 
+    {
+        let left_tabs = left_tabs.clone();
+        left_toggle.connect_toggled(move |b| left_tabs.set_visible(b.is_active()));
+    }
+    {
+        let sidebar = sidebar.clone();
+        right_toggle.connect_toggled(move |b| sidebar.set_visible(b.is_active()));
+    }
+
+    let vpaned = gtk::Paned::new(gtk::Orientation::Vertical);
+    vpaned.set_start_child(Some(&outer));
+    vpaned.set_end_child(Some(&strip_scroll));
+    vpaned.set_resize_start_child(true);
+    vpaned.set_shrink_start_child(false);
+    vpaned.set_shrink_end_child(false);
+    vpaned.set_position(520);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.append(&bar);
-    content.append(&outer);
-    content.append(&bottom);
+    content.append(&vpaned);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -2755,6 +2787,27 @@ add files to import first"));
             index.set(i + 1);
             glib::ControlFlow::Continue
         });
+    }
+
+    // Drag-and-drop media import: dropping files anywhere on the window
+    // adds them to the library.
+    {
+        let drop = gtk::DropTarget::new(
+            gtk::gdk::FileList::static_type(),
+            gtk::gdk::DragAction::COPY,
+        );
+        let editor = editor.clone();
+        drop.connect_drop(move |_, value, _, _| {
+            let Ok(list) = value.get::<gtk::gdk::FileList>() else { return false };
+            let paths: Vec<PathBuf> =
+                list.files().iter().filter_map(|f| f.path()).collect();
+            if paths.is_empty() {
+                return false;
+            }
+            editor.add_to_library(&paths);
+            true
+        });
+        window.add_controller(drop);
     }
 
     window.present();

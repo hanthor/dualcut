@@ -16,10 +16,11 @@ ones), or pass a path on the command line: `dualcut project.json`.
 
 ## The editor
 
-One window, four regions: the **Library / Templates / Code** tabs on
-the left, the **preview** with transport controls in the middle, the
-**Inspect / Script** panel on the right, and the **timeline** in a
-bottom pane you can toggle from the header bar.
+One window, four regions: the **Library / Templates / Code / Script**
+tabs on the left, the **preview** with transport controls in the
+middle, the **Inspector** (parameters for whatever is selected) on the
+right, and the **timeline** in a bottom pane you can toggle from the
+header bar.
 
 ![Editor overview](guide/editor-overview.png)
 
@@ -29,7 +30,8 @@ Transport shortcuts: **Space** play/pause, **←/→** frame-step,
 ## Library
 
 **Import** (header or the Library tab's empty state) adds media files
-to the project's library. Double-click a thumbnail to insert it into
+to the project's library — or just drag files from your file manager
+and drop them anywhere on the window. Double-click a thumbnail to insert it into
 the scene under the playhead; right-click for *Add to Timeline* /
 *Remove from Library*.
 
@@ -46,11 +48,19 @@ using *Save as template*.
 
 ## Code view
 
-The live project JSON. Edit it directly and press *Apply JSON* — the
-change is validated, undoable, and hot-reloads the preview, exactly as
-if an agent had edited the file on disk.
+The live project JSON — the document itself. Edit it directly and
+press *Apply JSON*; the change is validated, undoable, and hot-reloads
+the preview, exactly as if an agent had edited the file on disk.
 
 ![Code view](guide/code-view.png)
+
+## Script
+
+Where Code shows the document, Script *transforms* it: write a
+TypeScript function `export function edit(project: Project): Project`,
+press *Run script*, and the returned project becomes the new document
+(undoable like any other edit). Useful for bulk operations — renaming
+scenes, retiming clips, generating layers from data.
 
 ## Editing clips
 
