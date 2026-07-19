@@ -1782,6 +1782,24 @@ fn media_uri(src: &str, base_dir: &std::path::Path) -> Option<String> {
     base_dir.join(src).canonicalize().ok().map(|p| format!("file://{}", p.display()))
 }
 
+fn prefs_file() -> PathBuf {
+    glib::user_config_dir().join("dualcut").join("prefs")
+}
+
+fn prefs_show_script() -> bool {
+    std::fs::read_to_string(prefs_file())
+        .map(|s| s.lines().any(|l| l.trim() == "show_script=true"))
+        .unwrap_or(false)
+}
+
+fn prefs_set_show_script(value: bool) {
+    let file = prefs_file();
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&file, format!("show_script={value}\n"));
+}
+
 fn recents_file() -> PathBuf {
     glib::user_config_dir().join("dualcut").join("recent-projects")
 }
@@ -1975,6 +1993,10 @@ Types: engine/schema/dualcut.d.ts",
     page
 }
 
+fn export_target(dir: &std::path::Path, name: &str) -> String {
+    dir.join(name).display().to_string()
+}
+
 fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
     let (project_json, base_dir, title) = {
         let st = editor.state.borrow();
@@ -1997,13 +2019,41 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
     content.set_margin_start(14);
     content.set_margin_end(14);
 
-    let out_entry = gtk::Entry::new();
-    let default_name: String = title
+    // Separate directory + file name (#27); name defaults to the project
+    // slug with a timestamp suffix so repeated exports never collide.
+    let slug: String = title
         .chars()
         .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
         .collect();
-    out_entry.set_text(&base_dir.join(format!("{default_name}.mp4")).display().to_string());
-    content.append(&gtk::Label::builder().label("Output file").halign(gtk::Align::Start).build());
+    let stamp = glib::DateTime::now_local()
+        .ok()
+        .and_then(|d| d.format("%y%m%d_%H%M").ok())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let out_dir = Rc::new(std::cell::RefCell::new(base_dir.clone()));
+    let dir_btn = gtk::Button::with_label(&base_dir.display().to_string());
+    dir_btn.set_tooltip_text(Some("Choose output directory"));
+    {
+        let out_dir = out_dir.clone();
+        dir_btn.connect_clicked(move |btn| {
+            let picker = gtk::FileDialog::builder().title("Choose output directory").build();
+            let window = btn.root().and_downcast::<gtk::Window>();
+            let out_dir = out_dir.clone();
+            let btn = btn.clone();
+            picker.select_folder(window.as_ref(), gtk::gio::Cancellable::NONE, move |res| {
+                if let Ok(dir) = res
+                    && let Some(path) = dir.path() {
+                        btn.set_label(&path.display().to_string());
+                        *out_dir.borrow_mut() = path;
+                    }
+            });
+        });
+    }
+    let out_entry = gtk::Entry::new();
+    out_entry.set_text(&format!("{slug}_{stamp}.mp4"));
+    content.append(&gtk::Label::builder().label("Output directory").halign(gtk::Align::Start).build());
+    content.append(&dir_btn);
+    content.append(&gtk::Label::builder().label("File name").halign(gtk::Align::Start).build());
     content.append(&out_entry);
 
     let profile = gtk::DropDown::from_strings(&[
@@ -2044,6 +2094,9 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
     content.append(&profile);
 
     let status = gtk::Label::new(None);
+    status.set_selectable(true);
+    status.set_wrap(true);
+    status.add_css_class("monospace");
     status.set_halign(gtk::Align::Start);
     status.set_wrap(true);
 
@@ -2053,8 +2106,54 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
         let status = status.clone();
         let out_entry = out_entry.clone();
         let profile = profile.clone();
+        let start_render: Rc<dyn Fn(gtk::Button, String, String)> = {
+            let status = status.clone();
+            let project_json = project_json.clone();
+            let base_dir = base_dir.clone();
+            Rc::new(move |btn: gtk::Button, out: String, prof: String| {
+                btn.set_sensitive(false);
+                status.set_text("Rendering…");
+                let (tx, rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
+                {
+                    let project_json = project_json.clone();
+                    let base_dir = base_dir.clone();
+                    let out = out.clone();
+                    std::thread::spawn(move || {
+                        let result =
+                            dualcut_engine::render_project(&project_json, &base_dir, &out, &prof)
+                                .map(|warnings| {
+                                    for w in warnings {
+                                        eprintln!("warning: {w}");
+                                    }
+                                })
+                                .map_err(|e| format!("{e:#}"));
+                        let _ = tx.send(result);
+                    });
+                }
+                let status = status.clone();
+                glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+                    match rx.try_recv() {
+                        Ok(Ok(())) => {
+                            status.set_text(&format!("✓ exported {out}"));
+                            btn.set_sensitive(true);
+                            glib::ControlFlow::Break
+                        }
+                        Ok(Err(e)) => {
+                            // Mirror to the terminal so GUI and console
+                            // errors always match (#27).
+                            eprintln!("export failed: {e}");
+                            status.set_text(&format!("✗ {e}"));
+                            btn.set_sensitive(true);
+                            glib::ControlFlow::Break
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                        Err(_) => glib::ControlFlow::Break,
+                    }
+                });
+            })
+        };
         go.connect_clicked(move |btn| {
-            let out = out_entry.text().to_string();
+            let out = export_target(&out_dir.borrow(), out_entry.text().trim());
             let prof = match profile.selected() {
                 1 => "webm",
                 2 => "h265",
@@ -2070,43 +2169,25 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
                 _ => "mp4",
             }
             .to_string();
-            btn.set_sensitive(false);
-            status.set_text("Rendering…");
-            let (tx, rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
-            {
-                let project_json = project_json.clone();
-                let base_dir = base_dir.clone();
-                let out = out.clone();
-                std::thread::spawn(move || {
-                    let result =
-                        dualcut_engine::render_project(&project_json, &base_dir, &out, &prof)
-                            .map(|warnings| {
-                                for w in warnings {
-                                    eprintln!("warning: {w}");
-                                }
-                            })
-                            .map_err(|e| format!("{e:#}"));
-                    let _ = tx.send(result);
+            // Never silently clobber an existing file (#27).
+            if std::path::Path::new(&out).exists() {
+                let confirm = adw::AlertDialog::new(
+                    Some("Replace existing file?"),
+                    Some(&format!("{out} already exists.")),
+                );
+                confirm.add_response("cancel", "Cancel");
+                confirm.add_response("replace", "Replace");
+                confirm.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
+                confirm.set_default_response(Some("cancel"));
+                let start_render = start_render.clone();
+                let btn2 = btn.clone();
+                confirm.connect_response(Some("replace"), move |_, _| {
+                    start_render(btn2.clone(), out.clone(), prof.clone());
                 });
+                confirm.present(btn.root().and_downcast::<gtk::Window>().as_ref());
+                return;
             }
-            let status = status.clone();
-            let btn = btn.clone();
-            glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
-                match rx.try_recv() {
-                    Ok(Ok(())) => {
-                        status.set_text(&format!("✓ exported {out}"));
-                        btn.set_sensitive(true);
-                        glib::ControlFlow::Break
-                    }
-                    Ok(Err(e)) => {
-                        status.set_text(&format!("✗ {e}"));
-                        btn.set_sensitive(true);
-                        glib::ControlFlow::Break
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                    Err(_) => glib::ControlFlow::Break,
-                }
-            });
+            start_render(btn.clone(), out, prof);
         });
     }
     content.append(&go);
@@ -2415,6 +2496,13 @@ fn build_ui(app: &adw::Application) -> Result<()> {
 
     let bar = adw::HeaderBar::new();
 
+    let left_toggle = gtk::ToggleButton::new();
+    left_toggle.set_icon_name("sidebar-show-symbolic");
+    left_toggle.update_property(&[gtk::accessible::Property::Label("Toggle left panel")]);
+    left_toggle.set_tooltip_text(Some("Toggle left panel (Library / Templates / Code / Script)"));
+    left_toggle.set_active(true);
+    bar.pack_start(&left_toggle);
+
     // Open (split button with recents) + Import (#15).
     let open_btn = adw::SplitButton::new();
     open_btn.set_label("Open");
@@ -2477,6 +2565,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     }
     bar.pack_start(&open_btn);
     let import_btn = gtk::Button::with_label("Import");
+    import_btn.add_css_class("flat");
     import_btn.set_tooltip_text(Some("Import media into the library"));
     {
         let editor = editor.clone();
@@ -2486,19 +2575,19 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         });
     }
     bar.pack_start(&import_btn);
-    let left_toggle = gtk::ToggleButton::new();
-    left_toggle.set_icon_name("sidebar-show-symbolic");
-    left_toggle.update_property(&[gtk::accessible::Property::Label("Toggle left panel")]);
-    left_toggle.set_tooltip_text(Some("Toggle left panel (Library / Templates / Code / Script)"));
-    left_toggle.set_active(true);
-    bar.pack_start(&left_toggle);
     let timeline_toggle = gtk::ToggleButton::new();
     timeline_toggle.set_icon_name("view-continuous-symbolic");
     timeline_toggle.update_property(&[gtk::accessible::Property::Label("Toggle timeline pane")]);
     timeline_toggle.set_tooltip_text(Some("Toggle timeline pane"));
     timeline_toggle.set_active(true);
     bar.pack_start(&timeline_toggle);
-    let export = gtk::Button::from_icon_name("document-save-symbolic");
+    let export = gtk::Button::new();
+    let export_content = adw::ButtonContent::builder()
+        .icon_name("document-save-symbolic")
+        .label("Export")
+        .build();
+    export.set_child(Some(&export_content));
+    export.add_css_class("flat");
     export.update_property(&[gtk::accessible::Property::Label("Export video")]);
     export.set_tooltip_text(Some("Export video"));
     {
@@ -2508,7 +2597,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
             show_export_dialog(&editor, window.as_ref());
         });
     }
-    bar.pack_start(&export);
+
     let menu = gtk::gio::Menu::new();
     menu.append(Some("New Project"), Some("app.new-project"));
     menu.append(Some("Save Project As…"), Some("app.save-as"));
@@ -2529,6 +2618,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     right_toggle.set_tooltip_text(Some("Toggle inspector panel"));
     right_toggle.set_active(true);
     bar.pack_end(&right_toggle);
+    bar.pack_end(&export);
 
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     transport.set_margin_start(12);
@@ -2588,15 +2678,16 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     media_grid.set_min_children_per_line(2);
     media_grid.set_max_children_per_line(3);
     media_grid.set_homogeneous(true);
-    let media_empty = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    media_empty.set_valign(gtk::Align::Center);
-    media_empty.set_margin_top(24);
-    let empty_label = gtk::Label::new(Some("No media imported —
-add files to import first"));
-    empty_label.add_css_class("dim-label");
-    empty_label.set_justify(gtk::Justification::Center);
-    media_empty.append(&empty_label);
+    let media_empty = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let empty_status = adw::StatusPage::builder()
+        .icon_name("video-x-generic-symbolic")
+        .title("No Media Imported")
+        .description("Import files to build your library — or drop them anywhere on the window")
+        .build();
+    empty_status.set_vexpand(true);
     let empty_import = gtk::Button::with_label("Import…");
+    empty_import.add_css_class("pill");
+    empty_import.add_css_class("suggested-action");
     empty_import.set_halign(gtk::Align::Center);
     {
         let editor = editor.clone();
@@ -2605,7 +2696,8 @@ add files to import first"));
             editor.import_media(window.as_ref());
         });
     }
-    media_empty.append(&empty_import);
+    empty_status.set_child(Some(&empty_import));
+    media_empty.append(&empty_status);
     let media_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     media_page.append(&media_empty);
     media_page.append(&media_grid);
@@ -2664,8 +2756,38 @@ add files to import first"));
     left_tabs.append_page(&code_page, Some(&gtk::Label::new(Some("Code"))));
     #[cfg(feature = "scripting")]
     {
+        // Progressive disclosure (#22): Script is power-user surface,
+        // hidden unless enabled in Preferences.
         let script_page = build_script_panel(&editor);
         left_tabs.append_page(&script_page, Some(&gtk::Label::new(Some("Script"))));
+        script_page.set_visible(prefs_show_script());
+        let a = gtk::gio::SimpleAction::new("preferences", None);
+        {
+            let editor = editor.clone();
+            let script_page = script_page.clone();
+            a.connect_activate(move |_, _| {
+                let dialog = adw::PreferencesDialog::new();
+                let page = adw::PreferencesPage::new();
+                let group = adw::PreferencesGroup::builder().title("Interface").build();
+                let row = adw::SwitchRow::builder()
+                    .title("Show Script tab")
+                    .subtitle("TypeScript transforms of the project — for power users and agents")
+                    .build();
+                row.set_active(prefs_show_script());
+                {
+                    let script_page = script_page.clone();
+                    row.connect_active_notify(move |r| {
+                        script_page.set_visible(r.is_active());
+                        prefs_set_show_script(r.is_active());
+                    });
+                }
+                group.add(&row);
+                page.add(&group);
+                dialog.add(&page);
+                dialog.present(editor.window().as_ref());
+            });
+        }
+        app.add_action(&a);
     }
     left_tabs.set_size_request(260, -1);
 
@@ -2896,9 +3018,7 @@ add files to import first"));
             });
         }
         app.add_action(&a);
-        let a = make("preferences");
-        a.set_enabled(false);
-        app.add_action(&a);
+
     }
 
     // UI smoke-test hook: DUALCUT_TEST_ACTION=<name> activates an app
@@ -2923,7 +3043,9 @@ add files to import first"));
             steps.push(("editor-overview", Box::new(|| {})));
             {
                 let editor = editor.clone();
+                let tabs2 = left_tabs.clone();
                 steps.push(("library", Box::new(move || {
+                    tabs2.set_current_page(Some(1));
                     let project = editor.state.borrow().project.clone();
                     if let Some(mut project) = project {
                         project.library =
@@ -2934,11 +3056,11 @@ add files to import first"));
             }
             {
                 let tabs = left_tabs.clone();
-                steps.push(("templates", Box::new(move || tabs.set_current_page(Some(1)))));
+                steps.push(("templates", Box::new(move || tabs.set_current_page(Some(2)))));
             }
             {
                 let tabs = left_tabs.clone();
-                steps.push(("code-view", Box::new(move || tabs.set_current_page(Some(2)))));
+                steps.push(("code-view", Box::new(move || tabs.set_current_page(Some(3)))));
             }
             {
                 let editor = editor.clone();
