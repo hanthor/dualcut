@@ -64,11 +64,11 @@ pub fn build_demo_timeline(media_uri: Option<&str>) -> Result<ges::Timeline> {
     title.set_start(gst::ClockTime::from_seconds(1));
     title.set_duration(gst::ClockTime::from_seconds(5));
     title_layer.add_clip(&title).context("adding title clip")?;
-    title.set_child_property("text", &"dualcut M0: GES timeline works".to_value())?;
-    title.set_child_property("font-desc", &"Sans Bold 28".to_value())?;
+    title.set_child_property("text", "dualcut M0: GES timeline works".to_value())?;
+    title.set_child_property("font-desc", "Sans Bold 28".to_value())?;
     // Default title background is opaque; make it transparent (ARGB).
-    title.set_child_property("background", &0x00000000u32.to_value())?;
-    title.set_child_property("color", &0xffffffffu32.to_value())?;
+    title.set_child_property("background", 0x00000000u32.to_value())?;
+    title.set_child_property("color", 0xffffffffu32.to_value())?;
 
     timeline.commit_sync();
     Ok(timeline)

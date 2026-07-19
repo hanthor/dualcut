@@ -11,10 +11,7 @@
 //! Usage: serve <project.json> [port]     (default port 7357)
 
 use anyhow::{Context, Result};
-use dualcut_engine::{document::Project, encoding_profile, init, mapping, run_to_eos};
-use ges::prelude::*;
-use gstreamer_editing_services as ges;
-use std::io::Read;
+use dualcut_engine::{document::Project, init};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tiny_http::{Header, Method, Response, Server};

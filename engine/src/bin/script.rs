@@ -56,7 +56,7 @@ fn build_timeline(specs: &[serde_json::Value]) -> Result<ges::Timeline> {
                 title_layer.add_clip(&clip).context("add title")?;
                 let text = arg["text"].as_str().unwrap_or("").to_value();
                 clip.set_child_property("text", &text)?;
-                clip.set_child_property("background", &0x00000000u32.to_value())?;
+                clip.set_child_property("background", 0x00000000u32.to_value())?;
             }
             _ => {
                 let clip = ges::TestClip::new().context("test clip")?;

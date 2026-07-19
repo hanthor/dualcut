@@ -146,7 +146,9 @@ Clip: `{ id, start, duration, type, …element fields, transform?, animations? }
   `image` (src) · `shape` (M3, skipped with warning for now) ·
   `compref` (ref + args) · `test`
 - `transform`: `{ x, y, width, height, opacity }` pixels; 0 = natural
-- animations: `{ property: x|y|opacity, from, to, start, end, easing }`,
+- animations, two forms: tween `{ property, from, to, start, end, easing }`
+  or keyframes `{ property, keyframes: [{t, value, easing}, …] }` (>= 2,
+  strictly increasing t; property is x|y|width|height|opacity),
   times relative to the clip; easing: linear|easeIn|easeOut|easeInOut
 - `duration: 0` on a scene layer = fill the rest of the scene
 

@@ -92,17 +92,13 @@ pub fn waveform_png(cache_dir: &Path, uri: &str) -> Result<PathBuf> {
 
     pipeline.set_state(gst::State::Playing)?;
     let mut samples: Vec<f32> = Vec::new();
-    loop {
-        match sink.pull_sample() {
-            Ok(sample) => {
-                if let Some(buffer) = sample.buffer() {
-                    let map = buffer.map_readable()?;
-                    samples.extend(
-                        map.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
-                    );
-                }
-            }
-            Err(_) => break, // EOS or error ends the stream
+    // Pull until EOS or error ends the stream.
+    while let Ok(sample) = sink.pull_sample() {
+        if let Some(buffer) = sample.buffer() {
+            let map = buffer.map_readable()?;
+            samples.extend(
+                map.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+            );
         }
     }
     pipeline.set_state(gst::State::Null)?;

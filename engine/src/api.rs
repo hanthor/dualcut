@@ -5,7 +5,6 @@
 
 use crate::document::Project;
 use anyhow::{Context, Result};
-use std::io::Read;
 use std::path::PathBuf;
 use tiny_http::{Header, Method, Response, Server};
 

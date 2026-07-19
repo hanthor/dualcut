@@ -378,11 +378,20 @@ impl Editor {
 
         let button = gtk::Button::with_label(&clip.id);
         button.add_css_class("flat");
+        button.add_css_class(match &clip.element {
+            document::Element::Text { .. } => "clip-text",
+            document::Element::Video { .. } => "clip-video",
+            document::Element::Audio { .. } => "clip-audio",
+            document::Element::Image { .. } => "clip-image",
+            document::Element::Shape { .. } => "clip-shape",
+            document::Element::CompRef { .. } => "clip-compref",
+            document::Element::Test { .. } => "clip-test",
+        });
         let width_px = ((duration * SCENE_PX_PER_SEC) as i32).max(30);
         button.set_size_request(width_px, 28);
         button.set_tooltip_text(Some("Drag to move · right edge trims"));
-        if let document::Element::Audio { src, .. } = &clip.element {
-            if let Some(uri) = media_uri(src, &self.base_dir()) {
+        if let document::Element::Audio { src, .. } = &clip.element
+            && let Some(uri) = media_uri(src, &self.base_dir()) {
                 let wave = cache.join(format!("wave-{:016x}.png", fx_hash(&uri)));
                 if wave.exists() {
                     let pic = gtk::Picture::for_filename(&wave);
@@ -391,7 +400,6 @@ impl Editor {
                     button.set_tooltip_text(Some(&clip.id));
                 }
             }
-        }
         lane.put(&button, abs_start * SCENE_PX_PER_SEC, 1.0);
 
         {
@@ -494,18 +502,16 @@ impl Editor {
         for clip in all_clips {
             match &clip.element {
                 document::Element::Video { src, .. } | document::Element::Image { src } => {
-                    if let Some(uri) = media_uri(src, &base_dir) {
-                        if !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists() {
+                    if let Some(uri) = media_uri(src, &base_dir)
+                        && !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists() {
                             thumbs.push(uri);
                         }
-                    }
                 }
                 document::Element::Audio { src, .. } => {
-                    if let Some(uri) = media_uri(src, &base_dir) {
-                        if !cache.join(format!("wave-{:016x}.png", fx_hash(&uri))).exists() {
+                    if let Some(uri) = media_uri(src, &base_dir)
+                        && !cache.join(format!("wave-{:016x}.png", fx_hash(&uri))).exists() {
                             waves.push(uri);
                         }
-                    }
                 }
                 _ => {}
             }
@@ -880,11 +886,10 @@ impl Editor {
                 let clip_id = clip.id.clone();
                 Rc::new(move |mutate: Box<dyn Fn(&mut document::Anim)>| {
                     let mut project = project.clone();
-                    if let Some(c) = find_clip_mut(&mut project, &clip_id) {
-                        if let Some(a) = c.animations.get_mut(ai) {
+                    if let Some(c) = find_clip_mut(&mut project, &clip_id)
+                        && let Some(a) = c.animations.get_mut(ai) {
                             mutate(a);
                         }
-                    }
                     this.commit_document(project);
                 })
             };
@@ -906,7 +911,7 @@ impl Editor {
             }
             row.append(&prop);
 
-            let mut add_spin = |value: f64, lo: f64, hi: f64, set: fn(&mut document::Anim, f64)| {
+            let add_spin = |value: f64, lo: f64, hi: f64, set: fn(&mut document::Anim, f64)| {
                 let s = gtk::SpinButton::with_range(lo, hi, 0.1);
                 s.set_value(value);
                 s.set_width_chars(5);
@@ -946,11 +951,10 @@ impl Editor {
                 let clip_id = clip.id.clone();
                 del.connect_clicked(move |_| {
                     let mut project = project.clone();
-                    if let Some(c) = find_clip_mut(&mut project, &clip_id) {
-                        if ai < c.animations.len() {
+                    if let Some(c) = find_clip_mut(&mut project, &clip_id)
+                        && ai < c.animations.len() {
                             c.animations.remove(ai);
                         }
-                    }
                     this.commit_document(project);
                 });
             }
@@ -960,7 +964,7 @@ impl Editor {
 
         // Presets.
         let presets = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let mut add_preset = |label: &str, make: fn(&document::Clip) -> document::Anim| {
+        let add_preset = |label: &str, make: fn(&document::Clip) -> document::Anim| {
             let b = gtk::Button::with_label(label);
             let this = self.clone();
             let project = project.clone();
@@ -1372,8 +1376,6 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     preview_overlay.add_overlay(&sel_canvas);
     {
         let editor = editor.clone();
-        let seek = ();
-        let _ = seek;
         sel_canvas.set_draw_func(move |area, cr, w, h| {
             let st = editor.state.borrow();
             let Some(project) = st.project.as_ref() else { return };
@@ -1527,7 +1529,10 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         let time_label = time_label.clone();
         let sel_canvas = sel_canvas.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
-            sel_canvas.queue_draw();
+            // Redraw the selection overlay only while something is selected.
+            if editor.state.borrow().selected.is_some() {
+                sel_canvas.queue_draw();
+            }
             {
                 let st = editor.state.borrow();
                 if let Some(pos) = st.pipeline.query_position::<gst::ClockTime>() {
@@ -1726,6 +1731,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     {
         let controller = gtk::EventControllerKey::new();
         let editor = editor.clone();
+        let play_btn = play.clone();
         controller.connect_key_pressed(move |_, key, _, modifier| {
             if modifier.contains(gtk::gdk::ModifierType::CONTROL_MASK)
                 && (key == gtk::gdk::Key::z || key == gtk::gdk::Key::Z)
@@ -1737,10 +1743,63 @@ fn build_ui(app: &adw::Application) -> Result<()> {
                 }
                 return glib::Propagation::Stop;
             }
+            if modifier.is_empty() {
+                let pipeline = editor.state.borrow().pipeline.clone();
+                match key {
+                    gtk::gdk::Key::space => {
+                        let playing = pipeline.current_state() == gst::State::Playing;
+                        let next = if playing { gst::State::Paused } else { gst::State::Playing };
+                        let _ = pipeline.set_state(next);
+                        play_btn.set_icon_name(if playing {
+                            "media-playback-start-symbolic"
+                        } else {
+                            "media-playback-pause-symbolic"
+                        });
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Left | gtk::gdk::Key::Right => {
+                        let fps = editor
+                            .state
+                            .borrow()
+                            .project
+                            .as_ref()
+                            .map_or(30.0, |p| p.meta.fps as f64);
+                        let pos = pipeline
+                            .query_position::<gst::ClockTime>()
+                            .map(|p| p.nseconds() as f64 / 1e9)
+                            .unwrap_or(0.0);
+                        let step = if key == gtk::gdk::Key::Left { -1.0 } else { 1.0 } / fps;
+                        let _ = pipeline.set_state(gst::State::Paused);
+                        seek_to(&pipeline, (pos + step).max(0.0));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Home => {
+                        seek_to(&pipeline, 0.0);
+                        return glib::Propagation::Stop;
+                    }
+                    _ => {}
+                }
+            }
             glib::Propagation::Proceed
         });
         window.add_controller(controller);
     }
+
+    let css = gtk::CssProvider::new();
+    css.load_from_data(
+        "button.clip-text { background: alpha(#e5a50a, .25); }
+         button.clip-video { background: alpha(#3584e4, .25); }
+         button.clip-audio { background: alpha(#33d17a, .25); }
+         button.clip-image { background: alpha(#9141ac, .25); }
+         button.clip-shape { background: alpha(#e66100, .25); }
+         button.clip-compref { background: alpha(#986a44, .25); }
+         button.clip-test { background: alpha(#77767b, .3); }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(),
+        &css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 
     window.present();
     start_paused(&pipeline)?;

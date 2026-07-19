@@ -279,11 +279,10 @@ impl Project {
             if scene.duration <= 0.0 {
                 bail!("scene {:?}: duration must be > 0", scene.id);
             }
-            if let Some(t) = &scene.transition {
-                if t.duration <= 0.0 || t.duration >= scene.duration {
+            if let Some(t) = &scene.transition
+                && (t.duration <= 0.0 || t.duration >= scene.duration) {
                     bail!("scene {:?}: transition duration must be > 0 and < scene duration", scene.id);
                 }
-            }
             for clip in &scene.layers {
                 check(&clip.id, "clip")?;
                 clip.validate(&self.defs)?;
@@ -327,11 +326,10 @@ impl Clip {
                 }
             }
         }
-        if let Element::CompRef { r#ref, .. } = &self.element {
-            if !defs.contains_key(r#ref) {
+        if let Element::CompRef { r#ref, .. } = &self.element
+            && !defs.contains_key(r#ref) {
                 bail!("clip {:?} references unknown def {ref:?}", self.id);
             }
-        }
         Ok(())
     }
 }
@@ -417,11 +415,10 @@ pub fn detach_audio(project: &mut Project, id: &str) -> Option<String> {
         .find(|(_, s)| s.layers.iter().any(|c| c.id == id))
         .map(|(i, _)| project.scene_offset(i) + start)
         .unwrap_or(start);
-    if let Some(clip) = find_clip_mut(project, id) {
-        if let Element::Video { volume, .. } = &mut clip.element {
+    if let Some(clip) = find_clip_mut(project, id)
+        && let Element::Video { volume, .. } = &mut clip.element {
             *volume = 0.0;
         }
-    }
     let new_id = format!("{id}-audio");
     let audio = Clip {
         id: new_id.clone(),

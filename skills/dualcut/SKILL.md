@@ -50,7 +50,9 @@ Clip types: `text` · `video`/`audio` (src, offset, volume) · `image` ·
 `shape` (rect|circle|ellipse|star|polygon|line|arrow, GPU-rendered) ·
 `compref` (instantiate a def with args) · `test`. A `video` clip's src may
 be a live vector source: `vello://star?fill=%23ff5470&w=200&h=200&spin=1`.
-Animations: `{property: x|y|width|height|opacity, from, to, start, end, easing}`.
+Animations: tween `{property, from, to, start, end, easing}` or keyframes
+`{property, keyframes: [{t, value, easing}, ...]}` (>=2, increasing t);
+property: x|y|width|height|opacity.
 Detach audio = set video `volume: 0` + add an `audio` clip with same src.
 
 ## Drive a running app (HTTP, port 7357)

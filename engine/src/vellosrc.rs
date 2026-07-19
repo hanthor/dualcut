@@ -134,12 +134,11 @@ mod imp {
         }
 
         fn query(&self, query: &mut gst::QueryRef) -> bool {
-            if let gst::QueryViewMut::Duration(q) = query.view_mut() {
-                if q.format() == gst::Format::Time {
+            if let gst::QueryViewMut::Duration(q) = query.view_mut()
+                && q.format() == gst::Format::Time {
                     q.set(gst::ClockTime::from_seconds(DURATION_SECS));
                     return true;
                 }
-            }
             BaseSrcImplExt::parent_query(self, query)
         }
 

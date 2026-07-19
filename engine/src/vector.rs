@@ -18,6 +18,9 @@ use vello::{AaConfig, RenderParams, Renderer, RendererOptions, Scene};
 struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// One renderer reused across frames — creating it is the expensive
+    /// part (shader compilation), and vellosrc renders every frame.
+    renderer: std::sync::Mutex<Renderer>,
 }
 
 static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
@@ -33,7 +36,8 @@ fn gpu() -> Option<&'static Gpu> {
         .ok()?;
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
-        Some(Gpu { device, queue })
+        let renderer = Renderer::new(&device, RendererOptions::default()).ok()?;
+        Some(Gpu { device, queue, renderer: std::sync::Mutex::new(renderer) })
     })
     .as_ref()
 }
@@ -141,8 +145,7 @@ pub fn render_shape_rgba(
     rotate: f64,
 ) -> Result<Vec<u8>> {
     let gpu = gpu().context("no GPU/Vulkan adapter available for shape rendering")?;
-    let mut renderer = Renderer::new(&gpu.device, RendererOptions::default())
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut renderer = gpu.renderer.lock().unwrap();
 
     let argb = parse_color(fill_hex);
     let color = Color::from_rgba8(

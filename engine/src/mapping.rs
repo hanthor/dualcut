@@ -122,20 +122,20 @@ fn add_clip(
             title.set_start(start);
             title.set_duration(duration);
             layer.add_clip(&title)?;
-            title.set_child_property("text", &text.to_value())?;
-            title.set_child_property("font-desc", &font.to_value())?;
-            title.set_child_property("color", &parse_color(color).to_value())?;
-            title.set_child_property("background", &0u32.to_value())?;
+            title.set_child_property("text", text.to_value())?;
+            title.set_child_property("font-desc", font.to_value())?;
+            title.set_child_property("color", parse_color(color).to_value())?;
+            title.set_child_property("background", 0u32.to_value())?;
             if clip.transform.x != 0.0 || clip.transform.y != 0.0 {
-                title.set_child_property("halignment", &"absolute".to_value())?;
-                title.set_child_property("valignment", &"absolute".to_value())?;
+                title.set_child_property("halignment", "absolute".to_value())?;
+                title.set_child_property("valignment", "absolute".to_value())?;
                 title.set_child_property(
                     "xpos",
-                    &(clip.transform.x / project.meta.width as f64).to_value(),
+                    (clip.transform.x / project.meta.width as f64).to_value(),
                 )?;
                 title.set_child_property(
                     "ypos",
-                    &(clip.transform.y / project.meta.height as f64).to_value(),
+                    (clip.transform.y / project.meta.height as f64).to_value(),
                 )?;
             }
             Some(title.upcast())
@@ -152,7 +152,7 @@ fn add_clip(
             }
             layer.add_clip(&media)?;
             if (*volume - 1.0).abs() > f64::EPSILON {
-                let _ = media.set_child_property("volume", &volume.to_value());
+                let _ = media.set_child_property("volume", volume.to_value());
             }
             Some(media.upcast())
         }
@@ -238,18 +238,18 @@ fn apply_transform_and_animations(
     // clips use the frame positioner's pixel-space properties.
     if !is_title {
         if t.x != 0.0 || t.y != 0.0 {
-            ges_clip.set_child_property("posx", &(t.x as i32).to_value())?;
-            ges_clip.set_child_property("posy", &(t.y as i32).to_value())?;
+            ges_clip.set_child_property("posx", (t.x as i32).to_value())?;
+            ges_clip.set_child_property("posy", (t.y as i32).to_value())?;
         }
         if t.width > 0.0 {
-            ges_clip.set_child_property("width", &(t.width as i32).to_value())?;
+            ges_clip.set_child_property("width", (t.width as i32).to_value())?;
         }
         if t.height > 0.0 {
-            ges_clip.set_child_property("height", &(t.height as i32).to_value())?;
+            ges_clip.set_child_property("height", (t.height as i32).to_value())?;
         }
     }
     if (t.opacity - 1.0).abs() > f64::EPSILON {
-        ges_clip.set_child_property("alpha", &t.opacity.to_value())?;
+        ges_clip.set_child_property("alpha", t.opacity.to_value())?;
     }
 
     // One control source per property: GES allows a single binding per

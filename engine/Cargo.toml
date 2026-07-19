@@ -50,3 +50,8 @@ path = "src/bin/serve.rs"
 name = "vello_spike"
 path = "src/bin/vello_spike.rs"
 required-features = ["vector"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

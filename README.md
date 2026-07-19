@@ -7,6 +7,8 @@ HTTP API for agents) — every surface stays in sync while the app runs.
 > Concept and spec by **[KiKaraage](https://github.com/KiKaraage)** (main author).
 > Implementation built with Claude Code.
 
+![dualcut editor](docs/screenshot.png)
+
 **Install / update (Flatpak):**
 
 ```sh
