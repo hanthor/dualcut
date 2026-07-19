@@ -58,7 +58,8 @@ Clip: `{ id, start, duration, type, …element fields, transform?, animations?, 
   brightness?, contrast?, saturation?, hue?}`; `{type: "chromakey",
   color?, angle?, noise?}` (green screen); `{type: "crop", left?,
   right?, top?, bottom?}`; audio: `{type: "eq", low?, mid?, high?}`
-  (dB) and `{type: "compressor", threshold?, ratio?}`
+  (dB), `{type: "compressor", threshold?, ratio?}`, and
+  `{type: "denoise", level?}` (0-3)
 - scene transition kinds: crossfade | wipe-lr | wipe-tb | box-wipe | iris | clock
 - defs may nest (compref inside a def); cycles are rejected at validation
 - `type`: `text` (text/font/color) · `video`/`audio` (src/offset/volume) ·
@@ -67,8 +68,9 @@ Clip: `{ id, start, duration, type, …element fields, transform?, animations?, 
 - `transform`: `{ x, y, width, height, opacity }` pixels; 0 = natural
 - animations, two forms: tween `{ property, from, to, start, end, easing }`
   or keyframes `{ property, keyframes: [{t, value, easing}, …] }` (>= 2,
-  strictly increasing t; property is x|y|width|height|opacity|volume;
-  volume 1.0 = unity — animate it for audio fades/ducking),
+  strictly increasing t; property is x|y|width|height|opacity|volume|rate;
+  volume 1.0 = unity, rate 1.0 = normal speed — animate volume for
+  audio fades/ducking, animate rate for speed ramps),
   times relative to the clip; easing: linear|easeIn|easeOut|easeInOut
 - `duration: 0` on a scene layer = fill the rest of the scene
 

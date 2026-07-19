@@ -164,6 +164,12 @@ pub enum Effect {
         #[serde(default = "default_comp_ratio")]
         ratio: f64,
     },
+    /// Noise suppression (WebRTC audio processing) (#36).
+    Denoise {
+        /// 0=low, 1=moderate, 2=high, 3=very-high.
+        #[serde(default = "default_denoise_level")]
+        level: u32,
+    },
     /// Color balance. Neutral is brightness 0, contrast 1, saturation 1, hue 0.
     Color {
         #[serde(default)]
@@ -191,6 +197,9 @@ fn default_comp_threshold() -> f64 {
 }
 fn default_comp_ratio() -> f64 {
     2.0
+}
+fn default_denoise_level() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,6 +348,12 @@ pub enum AnimProperty {
     Opacity,
     /// Audio volume (0.0 silent, 1.0 unity). Audio/video clips only.
     Volume,
+    /// Playback speed multiplier. NOT YET SUPPORTED as an animation --
+    /// GES's rate-property auto-registration is unsafe to drive from a
+    /// live control binding (see mapping.rs); use a constant
+    /// clip.rate, or split the clip into segments with different
+    /// rates. Kept as a variant for forward-compat / clear errors.
+    Rate,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -466,6 +481,12 @@ impl Clip {
             && !(0.1..=10.0).contains(rate) {
                 bail!("clip {:?}: rate must be 0.1-10", self.id);
             }
+        if self.animations.iter().any(|a| a.property == AnimProperty::Rate) {
+            bail!(
+                "clip {:?}: keyframed rate animation is not yet supported                  (GES rate-property live-binding is unsafe); use a constant rate",
+                self.id
+            );
+        }
         for effect in &self.effects {
             match effect {
                 Effect::Blur { amount } => {
@@ -491,6 +512,11 @@ impl Clip {
                 Effect::Compressor { threshold, ratio } => {
                     if !(0.0..=1.0).contains(threshold) || !(1.0..=4.0).contains(ratio) {
                         bail!("clip {:?}: compressor threshold 0-1, ratio 1-4", self.id);
+                    }
+                }
+                Effect::Denoise { level } => {
+                    if *level > 3 {
+                        bail!("clip {:?}: denoise level must be 0-3", self.id);
                     }
                 }
                 Effect::Color { brightness, contrast, saturation, hue } => {

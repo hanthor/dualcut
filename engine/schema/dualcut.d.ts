@@ -140,7 +140,7 @@ export interface Transform {
 }
 
 export interface Anim {
-  property: "x" | "y" | "width" | "height" | "opacity" | "volume";
+  property: "x" | "y" | "width" | "height" | "opacity" | "volume" | "rate";
   /** Tween window form (ignored when keyframes is set). */
   from?: number;
   to?: number;
@@ -165,6 +165,11 @@ export type Effect =
     }
   | { type: "crop"; left?: number; right?: number; top?: number; bottom?: number }
   | { type: "eq"; /** dB, -24..12 per band */ low?: number; mid?: number; high?: number }
+  | {
+      type: "denoise";
+      /** 0=low, 1=moderate, 2=high, 3=very-high (default 1). */
+      level?: number;
+    }
   | {
       type: "compressor";
       /** Level where compression starts, 0-1 (default 0.25). */

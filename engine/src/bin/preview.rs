@@ -1573,6 +1573,23 @@ impl Editor {
         form.append(&row_dur);
         form.append(&row_op);
 
+        let rate_widgets: Option<gtk::SpinButton> = match &clip.element {
+            document::Element::Video { rate, .. } | document::Element::Audio { rate, .. } => {
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                let l = gtk::Label::new(Some("Speed"));
+                l.set_width_chars(9);
+                l.set_halign(gtk::Align::Start);
+                let s = gtk::SpinButton::with_range(0.1, 10.0, 0.1);
+                s.set_value(*rate);
+                s.set_hexpand(true);
+                row.append(&l);
+                row.append(&s);
+                form.append(&row);
+                Some(s)
+            }
+            _ => None,
+        };
+
         type TextWidgets = (gtk::Entry, gtk::DropDown, gtk::Entry, gtk::Switch);
         let text_widgets: Option<TextWidgets> = match &clip.element {
             document::Element::Text { text, align, outline, shadow, .. } => {
@@ -1633,6 +1650,13 @@ impl Editor {
                     clip.duration = spin_dur.value();
                     clip.transform.opacity = spin_op.value();
                     if let (
+                        document::Element::Video { rate, .. } | document::Element::Audio { rate, .. },
+                        Some(s),
+                    ) = (&mut clip.element, rate_widgets.as_ref())
+                    {
+                        *rate = s.value();
+                    }
+                    if let (
                         document::Element::Text { text, align, outline, shadow, .. },
                         Some((entry, align_dd, outline_entry, shadow_sw)),
                     ) = (&mut clip.element, text_widgets.as_ref())
@@ -1672,6 +1696,11 @@ impl Editor {
             document::AnimProperty::Height => 3,
             document::AnimProperty::Opacity => 4,
             document::AnimProperty::Volume => 5,
+            // Rate animation isn't GUI-selectable yet (unsafe to
+            // live-bind, see document::Effect validate()); shown as
+            // Volume's slot if a project already has one (shouldn't
+            // pass validate, but keep the match exhaustive).
+            document::AnimProperty::Rate => 5,
         };
         let ease_of = |e: &document::Easing| match e {
             document::Easing::Linear => 0,
@@ -1954,6 +1983,20 @@ impl Editor {
                         });
                     }
                 }
+                document::Effect::Denoise { level } => {
+                    let (l, s) = fx_spin("Level", *level as f64, 0.0, 3.0, 1.0);
+                    row.append(&l);
+                    row.append(&s);
+                    let commit_fx = commit_fx.clone();
+                    s.connect_value_changed(move |s| {
+                        let v = s.value() as u32;
+                        commit_fx(Box::new(move |fx| {
+                            if let document::Effect::Denoise { level } = fx {
+                                *level = v;
+                            }
+                        }));
+                    });
+                }
                 document::Effect::Compressor { threshold, ratio } => {
                     for (name, val, min, max, step) in [
                         ("Thresh", *threshold, 0.0, 1.0, 0.05),
@@ -2034,6 +2077,7 @@ impl Editor {
             ("+ Crop", document::Effect::Crop { left: 0, right: 0, top: 0, bottom: 0 }),
             ("+ EQ", document::Effect::Eq { low: 0.0, mid: 0.0, high: 0.0 }),
             ("+ Compressor", document::Effect::Compressor { threshold: 0.25, ratio: 2.0 }),
+            ("+ Denoise", document::Effect::Denoise { level: 1 }),
         ] {
             let b = gtk::Button::with_label(label);
             let this = self.clone();

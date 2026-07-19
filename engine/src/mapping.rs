@@ -205,12 +205,14 @@ fn add_clip(
             // Speed (#32): GES auto-registers pitch/videorate rate
             // properties and drives nle's media consumption itself
             // (verified by reproducer; see issue).
-            if (*rate - 1.0).abs() > f64::EPSILON {
-                let pitch = ges::Effect::new(&format!("pitch tempo={rate}"))
+            let animates_rate =
+                clip.animations.iter().any(|a| a.property == AnimProperty::Rate);
+            if (*rate - 1.0).abs() > f64::EPSILON || animates_rate {
+                let pitch = ges::Effect::new(&format!("pitch name=dcrate tempo={rate}"))
                     .context("pitch effect (rate)")?;
                 media.add(&pitch).context("adding pitch rate effect")?;
                 if matches!(clip.element, Element::Video { .. }) {
-                    let vrate = ges::Effect::new(&format!("videorate rate={rate}"))
+                    let vrate = ges::Effect::new(&format!("videorate name=dcvrate rate={rate}"))
                         .context("videorate effect")?;
                     media.add(&vrate).context("adding videorate effect")?;
                 }
@@ -341,6 +343,7 @@ fn apply_transform_and_animations(
             AnimProperty::Width => "width",
             AnimProperty::Height => "height",
             AnimProperty::Volume => "volume",
+            AnimProperty::Rate => "tempo",
         };
         by_prop.entry(prop).or_default().push(anim);
     }
@@ -432,6 +435,20 @@ fn apply_property_animations(
         let vol = find_by_factory(&bin, "volume").context("no volume element in effect")?;
         let binding = gst_controller::DirectControlBinding::new_absolute(&vol, "volume", &source);
         vol.add_control_binding(&binding)?;
+    } else if prop == "tempo" {
+        // Keyframed speed ramps are not implemented: GES class-level
+        // auto-registers pitch/videorate as *rate properties*, which
+        // recomputes timeline timing synchronously whenever they change
+        // (ges-timeline.c's edit-API thread-ownership assertion fires
+        // when that happens from the streaming thread a GstController
+        // callback runs on -- confirmed by direct reproduction, not
+        // speculation). A safe ramp needs segmentation: split the clip
+        // into several sub-clips, each holding a static tempo sampled
+        // from the curve, rather than live-animating the property. See
+        // the rate-ramp tracking issue for the design.
+        anyhow::bail!(
+            "keyframed rate/tempo animation is not yet supported (GES rate-property              live-binding is unsafe); use a constant clip.rate, or split the clip into              segments with different rates"
+        );
     } else {
         element
             .set_control_source(&source, prop, "direct-absolute")
@@ -484,6 +501,9 @@ fn apply_effects(ges_clip: &ges::Clip, clip: &Clip, warnings: &mut Vec<String>) 
             }
             crate::document::Effect::Compressor { threshold, ratio } => {
                 format!("audiodynamic mode=compressor threshold={threshold} ratio={ratio}")
+            }
+            crate::document::Effect::Denoise { level } => {
+                format!("webrtcdsp echo-cancel=false noise-suppression=true noise-suppression-level={level}")
             }
             crate::document::Effect::Color { brightness, contrast, saturation, hue } => format!(
                 "videobalance brightness={brightness} contrast={contrast} saturation={saturation} hue={hue}"

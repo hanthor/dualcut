@@ -44,7 +44,7 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Effects (blur, color) | ✅ | 🟡 | ✅ | ✅ | ✅ |
 | Full color grading | ✅ | 🟡 | ✅ | ❌ | 🟡 (videobalance) |
 | Masks / chroma key | ✅ | ✅ | ✅ | ✅ (chroma key + crop) | ✅ |
-| Speed ramping | ✅ | ✅ | ✅ | 🟡 (constant rate; ramping later) | ✅ |
+| Speed ramping | ✅ | ✅ | ✅ | 🟡 (constant rate) | 🟡 (constant; ramps need segmentation, #40) |
 | Vector shapes | 🟡 (stickers) | ❌ | 🟡 | ✅ (7 shapes, live GPU) | ✅ (`vello://`) |
 
 ## Text & templates
@@ -67,7 +67,7 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Volume keyframes/fades | ✅ | ✅ | ✅ | ✅ (presets + keyframes) | ✅ |
 | Detach audio from video | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Auto-crossfade at cuts | ✅ | ✅ | 🟡 | ✅ | ✅ |
-| Audio effects (EQ, denoise) | ✅ | 🟡 | ✅ | ✅ (EQ + compressor) | ✅ |
+| Audio effects (EQ, denoise) | ✅ | 🟡 | ✅ | ✅ (EQ + compressor + denoise) | ✅ |
 
 ## Export
 
@@ -99,6 +99,9 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 2. **Auto-captions bundling** — *Generate Captions…* in the menu and
    the agent recipe both drive a local whisper.cpp install (#37); the
    remaining gap is bundling STT so it works out of the box.
+6. **Keyframed speed ramps** — constant rate ships; ramping needs
+   clip segmentation (#40), not live GES property binding (unsafe,
+   root-caused).
 3. **Bezier masks** — chroma key + rectangular crop ship; freeform
    masks need a compositor story.
 4. **Denoise** — EQ + compressor ship; needs a flatpak-viable plugin.

@@ -404,7 +404,8 @@
             "chromakey",
             "crop",
             "eq",
-            "compressor"
+            "compressor",
+            "denoise"
           ]
         },
         "amount": {
@@ -485,6 +486,11 @@
           "type": "number",
           "minimum": 1,
           "maximum": 4
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
         }
       }
     }
