@@ -12,7 +12,10 @@
 
 use anyhow::{Context, Result};
 use dualcut_engine::{build_demo_timeline, document, document::Project, init, mapping};
-use document::{detach_audio, find_clip, find_clip_mut, move_clip_to_lane, remove_clip, save_as_def};
+use document::{
+    detach_audio, find_clip, find_clip_mut, move_clip_to_lane, remove_clip, ripple_delete,
+    save_as_def, split_clip,
+};
 use ges::prelude::*;
 use gstreamer as gst;
 use gstreamer_editing_services as ges;
@@ -215,6 +218,47 @@ impl Editor {
                     }
                 }
         });
+    }
+
+    /// Ripple-delete the selected clip (#34).
+    fn ripple_delete_selected(self: &Rc<Self>) {
+        let (project, selected) = {
+            let st = self.state.borrow();
+            (st.project.clone(), st.selected.clone())
+        };
+        let (Some(mut project), Some(selected)) = (project, selected) else { return };
+        if selected.starts_with("scene:") {
+            return;
+        }
+        match ripple_delete(&mut project, &selected) {
+            Ok(()) => {
+                self.state.borrow_mut().selected = None;
+                self.commit_document(project);
+                self.toast_undo(&format!("Clip {selected:?} ripple-deleted"));
+            }
+            Err(e) => eprintln!("ripple delete: {e:#}"),
+        }
+    }
+
+    /// Split the selected clip at the playhead (#29).
+    fn split_selected(self: &Rc<Self>) {
+        let (project, selected, time) = {
+            let st = self.state.borrow();
+            let time = st
+                .pipeline
+                .query_position::<gst::ClockTime>()
+                .map(|p| p.nseconds() as f64 / 1e9)
+                .unwrap_or(0.0);
+            (st.project.clone(), st.selected.clone(), time)
+        };
+        let (Some(mut project), Some(selected)) = (project, selected) else { return };
+        if selected.starts_with("scene:") {
+            return;
+        }
+        match split_clip(&mut project, &selected, time) {
+            Ok(_) => self.commit_document(project),
+            Err(e) => eprintln!("split: {e:#}"),
+        }
     }
 
     /// Transient "X deleted — Undo" toast (deletes are silent otherwise).
@@ -2681,6 +2725,20 @@ fn build_ui(app: &adw::Application) -> Result<()> {
             });
         }
         toolbar.append(&zoom);
+        let split_btn = gtk::Button::new();
+        let split_content = adw::ButtonContent::builder()
+            .icon_name("edit-cut-symbolic")
+            .label("Split")
+            .build();
+        split_btn.set_child(Some(&split_content));
+        split_btn.add_css_class("flat");
+        split_btn.set_tooltip_text(Some("Split selected clip at playhead (S)"));
+        split_btn.update_property(&[gtk::accessible::Property::Label("Split clip at playhead")]);
+        {
+            let editor = editor.clone();
+            split_btn.connect_clicked(move |_| editor.split_selected());
+        }
+        toolbar.append(&split_btn);
         bottom_box.append(&toolbar);
     }
     bottom_box.append(&strip_scroll);
@@ -2972,6 +3030,14 @@ fn build_ui(app: &adw::Application) -> Result<()> {
                         seek_to(&pipeline, 0.0);
                         return glib::Propagation::Stop;
                     }
+                    gtk::gdk::Key::Delete => {
+                        editor.ripple_delete_selected();
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::s | gtk::gdk::Key::S => {
+                        editor.split_selected();
+                        return glib::Propagation::Stop;
+                    }
                     gtk::gdk::Key::End => {
                         let end = editor
                             .state
@@ -3073,6 +3139,8 @@ fn build_ui(app: &adw::Application) -> Result<()> {
                     ("Undo", "<Ctrl>Z"),
                     ("Redo", "<Ctrl><Shift>Z <Ctrl>Y"),
                     ("Delete selected clips", "Delete"),
+                    ("Split selected clip at playhead", "S"),
+                    ("Ripple delete selected clip", "Delete"),
                 ] {
                     editing.add(adw::ShortcutsItem::new(title, accel));
                 }
