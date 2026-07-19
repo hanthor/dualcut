@@ -2013,6 +2013,12 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
         "webm (VP9/Opus)",
         "mp4 (AV1/AAC)",
         "mov (ProRes/PCM)",
+        "mkv (FFV1/FLAC lossless)",
+        "m4a (AAC audio)",
+        "ogg (Opus audio)",
+        "flac (audio)",
+        "mp3 (audio)",
+        "wav (audio)",
     ]);
     {
         let out_entry = out_entry.clone();
@@ -2020,6 +2026,12 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
             let ext = match dd.selected() {
                 1 | 3 => "webm",
                 5 => "mov",
+                6 => "mkv",
+                7 => "m4a",
+                8 => "ogg",
+                9 => "flac",
+                10 => "mp3",
+                11 => "wav",
                 _ => "mp4",
             };
             let text = out_entry.text().to_string();
@@ -2049,6 +2061,12 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
                 3 => "vp9",
                 4 => "av1",
                 5 => "prores",
+                6 => "ffv1",
+                7 => "m4a",
+                8 => "ogg",
+                9 => "flac",
+                10 => "mp3",
+                11 => "wav",
                 _ => "mp4",
             }
             .to_string();
