@@ -50,6 +50,10 @@ export interface Transition {
 
 export interface OverlayTrack {
   id: string;
+  /** Mute this track's audio (non-destructive). */
+  muted?: boolean;
+  /** Hide this track's video (non-destructive). */
+  hidden?: boolean;
   name?: string;
   clips?: Clip[];
 }

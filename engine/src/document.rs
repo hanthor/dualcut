@@ -85,6 +85,12 @@ pub enum TransitionKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlayTrack {
     pub id: String,
+    /// Mute the track's audio without touching its clips (#31).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
+    /// Hide the track's video without touching its clips (#31).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -693,6 +699,8 @@ pub fn detach_audio(project: &mut Project, id: &str) -> Option<String> {
         track.clips.push(audio);
     } else {
         project.overlays.push(OverlayTrack {
+            muted: false,
+            hidden: false,
             id: "detached-audio".into(),
             name: "Detached audio".into(),
             clips: vec![audio],

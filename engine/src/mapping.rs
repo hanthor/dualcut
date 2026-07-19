@@ -37,6 +37,29 @@ pub fn compile_scaled(
     scale: f64,
 ) -> Result<Compiled> {
     project.validate()?;
+    // Track mute/hide (#31): applied non-destructively at compile time
+    // by zeroing volume/opacity on the affected clips.
+    let adjusted;
+    let project = if project.overlays.iter().any(|t| t.muted || t.hidden) {
+        let mut p = project.clone();
+        for track in &mut p.overlays {
+            for clip in &mut track.clips {
+                if track.hidden {
+                    clip.transform.opacity = 0.0;
+                }
+                if track.muted
+                    && let Element::Video { volume, .. } | Element::Audio { volume, .. } =
+                        &mut clip.element
+                {
+                    *volume = 0.0;
+                }
+            }
+        }
+        adjusted = p;
+        &adjusted
+    } else {
+        project
+    };
     let timeline = ges::Timeline::new_audio_video();
     // Crossfades: scenes with a transition overlap their predecessor on the
     // same GES layers; auto-transition renders the blend.

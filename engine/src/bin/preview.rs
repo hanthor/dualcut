@@ -540,8 +540,41 @@ impl Editor {
             let name = if track.name.is_empty() { &track.id } else { &track.name };
             let tag = gtk::Label::new(Some(&format!("〜 {name}")));
             tag.add_css_class("dim-label");
-            tag.set_width_chars(14);
+            tag.set_width_chars(8);
+            tag.set_ellipsize(gtk::pango::EllipsizeMode::End);
             row.append(&tag);
+            // Track visibility / mute toggles (#31).
+            for (icon_on, icon_off, is_mute) in [
+                ("view-reveal-symbolic", "view-conceal-symbolic", false),
+                ("audio-volume-high-symbolic", "audio-volume-muted-symbolic", true),
+            ] {
+                let active = if is_mute { track.muted } else { track.hidden };
+                let b = gtk::ToggleButton::new();
+                b.set_icon_name(if active { icon_off } else { icon_on });
+                b.set_active(active);
+                b.add_css_class("flat");
+                b.set_tooltip_text(Some(if is_mute { "Mute track" } else { "Hide track" }));
+                b.update_property(&[gtk::accessible::Property::Label(if is_mute {
+                    "Mute track"
+                } else {
+                    "Hide track"
+                })]);
+                let this = self.clone();
+                let track_id = track.id.clone();
+                let project_snapshot = project.clone();
+                b.connect_toggled(move |btn| {
+                    let mut project = project_snapshot.clone();
+                    if let Some(t) = project.overlays.iter_mut().find(|t| t.id == track_id) {
+                        if is_mute {
+                            t.muted = btn.is_active();
+                        } else {
+                            t.hidden = btn.is_active();
+                        }
+                        this.commit_document(project);
+                    }
+                });
+                row.append(&b);
+            }
             let lane = gtk::Fixed::new();
             lane.set_size_request((project.duration() * pps) as i32 + 40, 30);
             for clip in &track.clips {
