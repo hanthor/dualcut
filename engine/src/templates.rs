@@ -16,6 +16,7 @@ pub fn new_project(title: &str) -> Project {
     args.insert("subtitle".to_string(), "Made with dualcut".to_string());
     Project {
         meta: Meta { title: title.into(), width: 1920, height: 1080, fps: 30 },
+        library: Vec::new(),
         defs: starter_defs(),
         scenes: vec![Scene {
             id: "scene-1".into(),

@@ -7,6 +7,8 @@
  */
 
 export interface Project {
+  /** Media files imported into the project library (paths relative to the project file). */
+  library?: string[];
   meta: Meta;
   /** Reusable parameterised compositions, instantiated via CompRefClip. */
   defs?: Record<string, CompDef>;

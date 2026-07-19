@@ -109,7 +109,8 @@ struct Ui {
     seek: gtk::Scale,
     strip: gtk::Box,
     inspector: gtk::Box,
-    media_list: gtk::ListBox,
+    media_grid: gtk::FlowBox,
+    media_empty: gtk::Box,
     templates_list: gtk::ListBox,
     code_buffer: gtk::TextBuffer,
 }
@@ -133,16 +134,114 @@ impl Editor {
     fn commit_document(self: &Rc<Self>, project: Project) {
         let (path, prev_json) = {
             let st = self.state.borrow();
-            let Some(path) = st.project_path.clone() else { return };
             let prev = st.project.as_ref().map(|p| p.to_json());
-            (path, prev)
+            (st.project_path.clone(), prev)
         };
         if let Some(prev) = prev_json {
             let mut st = self.state.borrow_mut();
             st.undo.push(prev);
             st.redo.clear();
         }
-        self.write_and_rebuild(&path, project);
+        match path {
+            Some(path) => self.write_and_rebuild(&path, project),
+            // Unsaved project: keep everything in memory until Save As.
+            None => self.rebuild_in_memory(project),
+        }
+    }
+
+    fn rebuild_in_memory(self: &Rc<Self>, project: Project) {
+        match compile_project(&project, &self.base_dir()) {
+            Ok(timeline) => {
+                {
+                    let st = self.state.borrow();
+                    let _ = st.pipeline.set_timeline(&timeline);
+                }
+                self.state.borrow_mut().project = Some(project);
+                self.rebuild_strip();
+                self.rebuild_inspector();
+                self.rebuild_media();
+                self.rebuild_templates();
+                self.refresh_code();
+            }
+            Err(e) => eprintln!("rebuild failed (keeping current timeline): {e:#}"),
+        }
+    }
+
+    /// Save As: pick a path, write, adopt it for future auto-saves.
+    fn save_project_as(self: &Rc<Self>, window: Option<&gtk::Window>) {
+        let dialog = gtk::FileDialog::builder().title("Save project").build();
+        dialog.set_initial_name(Some("project.json"));
+        let this = self.clone();
+        dialog.save(window, gtk::gio::Cancellable::NONE, move |res| {
+            if let Ok(file) = res
+                && let Some(path) = file.path() {
+                    let project = this.state.borrow().project.clone();
+                    if let Some(project) = project {
+                        this.state.borrow_mut().project_path = Some(path.clone());
+                        remember_recent(&path);
+                        this.write_and_rebuild(&path, project);
+                        if let Some(win) = this.window() {
+                            win.set_title(Some(&format!(
+                                "dualcut — {}",
+                                path.file_name().and_then(|n| n.to_str()).unwrap_or("project")
+                            )));
+                        }
+                    }
+                }
+        });
+    }
+
+    fn window(&self) -> Option<gtk::Window> {
+        let ui = self.ui.borrow();
+        ui.as_ref().and_then(|u| u.picture.root().and_downcast::<gtk::Window>())
+    }
+
+    /// Open a project file, replacing the current session state.
+    fn open_project(self: &Rc<Self>, path: &std::path::Path) {
+        match std::fs::read_to_string(path).map_err(anyhow::Error::from).and_then(|json| Project::from_json(&json)) {
+            Ok(project) => {
+                {
+                    let mut st = self.state.borrow_mut();
+                    st.project_path = Some(path.to_path_buf());
+                    st.undo.clear();
+                    st.redo.clear();
+                    st.selected = None;
+                }
+                remember_recent(path);
+                if let Some(win) = self.window() {
+                    win.set_title(Some(&format!(
+                        "dualcut — {}",
+                        path.file_name().and_then(|n| n.to_str()).unwrap_or("project")
+                    )));
+                }
+                self.rebuild_in_memory(project);
+            }
+            Err(e) => eprintln!("open failed: {e:#}"),
+        }
+    }
+
+    /// Import media files into the project library (#15).
+    fn import_media(self: &Rc<Self>, window: Option<&gtk::Window>) {
+        let dialog = gtk::FileDialog::builder().title("Import media").build();
+        let this = self.clone();
+        dialog.open_multiple(window, gtk::gio::Cancellable::NONE, move |res| {
+            let Ok(files) = res else { return };
+            let project = this.state.borrow().project.clone();
+            let Some(mut project) = project else { return };
+            let base = this.base_dir();
+            for i in 0..files.n_items() {
+                let Some(file) = files.item(i).and_downcast::<gtk::gio::File>() else { continue };
+                let Some(path) = file.path() else { continue };
+                let entry = path
+                    .strip_prefix(&base)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| path.display().to_string());
+                if !project.library.contains(&entry) {
+                    project.library.push(entry);
+                }
+            }
+            this.commit_document(project);
+        });
     }
 
     fn write_and_rebuild(self: &Rc<Self>, path: &std::path::Path, project: Project) {
@@ -504,6 +603,21 @@ impl Editor {
             .iter()
             .flat_map(|s| s.layers.iter())
             .chain(project.overlays.iter().flat_map(|t| t.clips.iter()));
+        for rel in &project.library {
+            if let Some(uri) = media_uri(rel, &base_dir) {
+                let is_audio = matches!(
+                    rel.rsplit(".").next().unwrap_or("").to_lowercase().as_str(),
+                    "ogg" | "mp3" | "wav" | "flac"
+                );
+                if is_audio {
+                    if !cache.join(format!("wave-{:016x}.png", fx_hash(&uri))).exists() {
+                        waves.push(uri);
+                    }
+                } else if !cache.join(format!("thumb-{:016x}.png", fx_hash(&uri))).exists() {
+                    thumbs.push(uri);
+                }
+            }
+        }
         for clip in all_clips {
             match &clip.element {
                 document::Element::Video { src, .. } | document::Element::Image { src } => {
@@ -575,52 +689,105 @@ impl Editor {
         });
     }
 
-    /// Media tab: files in the project dir (and assets/) insertable at the
-    /// playhead into the scene under it.
+    /// Library tab: media the user imported (project.library), shown as a
+    /// thumbnail grid with a context menu (#15).
     fn rebuild_media(self: &Rc<Self>) {
         let ui = self.ui.borrow();
         let Some(ui) = ui.as_ref() else { return };
-        while let Some(child) = ui.media_list.first_child() {
-            ui.media_list.remove(&child);
+        while let Some(child) = ui.media_grid.first_child() {
+            ui.media_grid.remove(&child);
         }
-        let base = self.base_dir();
-        const EXTS: [&str; 12] = ["mp4", "webm", "mov", "mkv", "ogg", "mp3", "wav", "flac", "png", "jpg", "jpeg", "webp"];
-        let mut files: Vec<PathBuf> = Vec::new();
-        for dir in [base.clone(), base.join("assets")] {
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                    if EXTS.contains(&ext.as_str()) {
-                        files.push(path);
-                    }
+        let (library, base) = {
+            let st = self.state.borrow();
+            (
+                st.project.as_ref().map(|p| p.library.clone()).unwrap_or_default(),
+                self.base_dir(),
+            )
+        };
+        ui.media_empty.set_visible(library.is_empty());
+        let cache = base.join(".dualcut-cache");
+        for rel in library {
+            let cell = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            cell.set_margin_top(4);
+            cell.set_margin_bottom(4);
+            if let Some(uri) = media_uri(&rel, &base) {
+                let thumb = cache.join(format!("thumb-{:016x}.png", fx_hash(&uri)));
+                let wave = cache.join(format!("wave-{:016x}.png", fx_hash(&uri)));
+                let img = if thumb.exists() { Some(thumb) } else if wave.exists() { Some(wave) } else { None };
+                if let Some(img) = img {
+                    let pic = gtk::Picture::for_filename(&img);
+                    pic.set_size_request(120, 68);
+                    pic.set_content_fit(gtk::ContentFit::Cover);
+                    cell.append(&pic);
+                } else {
+                    let icon = gtk::Image::from_icon_name("video-x-generic-symbolic");
+                    icon.set_pixel_size(48);
+                    cell.append(&icon);
                 }
             }
-        }
-        files.sort();
-        for path in files {
-            let rel = path.strip_prefix(&base).unwrap_or(&path).display().to_string();
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            row.set_margin_top(2);
-            row.set_margin_bottom(2);
-            row.set_margin_start(6);
-            let label = gtk::Label::new(Some(&rel));
-            label.set_halign(gtk::Align::Start);
-            label.set_hexpand(true);
+            let label = gtk::Label::new(Some(
+                std::path::Path::new(&rel)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&rel),
+            ));
             label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-            row.append(&label);
-            let add = gtk::Button::from_icon_name("list-add-symbolic");
-            add.add_css_class("flat");
-            add.set_tooltip_text(Some("Insert at playhead"));
+            label.set_max_width_chars(14);
+            label.set_tooltip_text(Some(&rel));
+            cell.append(&label);
+
+            // Right-click context menu: add / remove.
+            let gesture = gtk::GestureClick::new();
+            gesture.set_button(3);
             {
                 let this = self.clone();
                 let rel = rel.clone();
-                add.connect_clicked(move |_| this.insert_media(&rel));
+                let cell = cell.clone();
+                gesture.connect_pressed(move |_, _, x, y| {
+                    let pop = gtk::Popover::new();
+                    let menu_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                    for (label, action) in [("Add to Timeline", 0), ("Remove from Library", 1)] {
+                        let b = gtk::Button::with_label(label);
+                        b.add_css_class("flat");
+                        let this = this.clone();
+                        let rel = rel.clone();
+                        let pop2 = pop.clone();
+                        b.connect_clicked(move |_| {
+                            pop2.popdown();
+                            if action == 0 {
+                                this.insert_media(&rel);
+                            } else {
+                                let project = this.state.borrow().project.clone();
+                                if let Some(mut project) = project {
+                                    project.library.retain(|e| e != &rel);
+                                    this.commit_document(project);
+                                }
+                            }
+                        });
+                        menu_box.append(&b);
+                    }
+                    pop.set_child(Some(&menu_box));
+                    pop.set_parent(&cell);
+                    pop.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                    pop.popup();
+                });
             }
-            row.append(&add);
-            let lbrow = gtk::ListBoxRow::new();
-            lbrow.set_child(Some(&row));
-            ui.media_list.append(&lbrow);
+            cell.add_controller(gesture);
+
+            // Double-click adds to the timeline.
+            let dbl = gtk::GestureClick::new();
+            dbl.set_button(1);
+            {
+                let this = self.clone();
+                let rel = rel.clone();
+                dbl.connect_pressed(move |_, n, _, _| {
+                    if n == 2 {
+                        this.insert_media(&rel);
+                    }
+                });
+            }
+            cell.add_controller(dbl);
+            ui.media_grid.insert(&cell, -1);
         }
     }
 
@@ -1540,6 +1707,126 @@ fn media_uri(src: &str, base_dir: &std::path::Path) -> Option<String> {
     base_dir.join(src).canonicalize().ok().map(|p| format!("file://{}", p.display()))
 }
 
+fn recents_file() -> PathBuf {
+    glib::user_config_dir().join("dualcut").join("recent-projects")
+}
+
+fn load_recents() -> Vec<PathBuf> {
+    std::fs::read_to_string(recents_file())
+        .unwrap_or_default()
+        .lines()
+        .map(PathBuf::from)
+        .filter(|p| p.exists())
+        .take(8)
+        .collect()
+}
+
+fn remember_recent(path: &std::path::Path) {
+    let mut entries = load_recents();
+    entries.retain(|p| p != path);
+    entries.insert(0, path.to_path_buf());
+    entries.truncate(8);
+    let file = recents_file();
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(
+        &file,
+        entries.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("
+"),
+    );
+}
+
+/// Locate the bundled agent skill directory (flatpak install or repo).
+fn skill_source_dir() -> Option<PathBuf> {
+    ["/app/share/dualcut/skills/dualcut", "../skills/dualcut", "skills/dualcut"]
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.join("SKILL.md").exists())
+}
+
+fn install_skill_to(target_root: &std::path::Path) -> Result<PathBuf> {
+    let src = skill_source_dir().context("bundled skill files not found")?;
+    let dest = target_root.join("dualcut");
+    std::fs::create_dir_all(&dest)?;
+    for entry in std::fs::read_dir(&src)?.flatten() {
+        if entry.path().is_file() {
+            std::fs::copy(entry.path(), dest.join(entry.file_name()))?;
+        }
+    }
+    Ok(dest)
+}
+
+fn show_skills_dialog(editor: &Rc<Editor>, window: Option<&gtk::Window>) {
+    let dialog = adw::AlertDialog::new(
+        Some("Install Agent Skills"),
+        Some("Install the dualcut agent skill so coding agents can edit your projects."),
+    );
+    dialog.add_response("agents", "~/.agents/skills");
+    dialog.add_response("claude", "~/.claude/skills");
+    dialog.add_response("choose", "Choose directory…");
+    dialog.add_response("cancel", "Cancel");
+    dialog.set_default_response(Some("claude"));
+    dialog.set_close_response("cancel");
+    let win = window.cloned();
+    let editor = editor.clone();
+    dialog.connect_response(None, move |d, response| {
+        let home = glib::home_dir();
+        let target = match response {
+            "agents" => Some(home.join(".agents/skills")),
+            "claude" => Some(home.join(".claude/skills")),
+            "choose" => {
+                let picker = gtk::FileDialog::builder().title("Choose Skill Directory").build();
+                let editor = editor.clone();
+                picker.select_folder(
+                    editor.window().as_ref(),
+                    gtk::gio::Cancellable::NONE,
+                    move |res| {
+                        if let Ok(dir) = res
+                            && let Some(path) = dir.path() {
+                                match install_skill_to(&path) {
+                                    Ok(dest) => println!("skill installed to {}", dest.display()),
+                                    Err(e) => eprintln!("skill install failed: {e:#}"),
+                                }
+                            }
+                    },
+                );
+                None
+            }
+            _ => None,
+        };
+        if let Some(target) = target {
+            match install_skill_to(&target) {
+                Ok(dest) => {
+                    let done = adw::AlertDialog::new(
+                        Some("Skill installed"),
+                        Some(&format!("Installed to {}", dest.display())),
+                    );
+                    done.add_response("ok", "OK");
+                    done.present(win.as_ref());
+                }
+                Err(e) => eprintln!("skill install failed: {e:#}"),
+            }
+        }
+        d.close();
+    });
+    dialog.present(window);
+}
+
+fn show_about(window: Option<&gtk::Window>) {
+    let about = adw::AboutDialog::builder()
+        .application_name("Dualcut")
+        .application_icon("io.github.hanthor.Dualcut")
+        .version(env!("CARGO_PKG_VERSION"))
+        .developer_name("James Reilly")
+        .developers(["James Reilly (hanthor)", "KiKaraage"])
+        .website("https://github.com/hanthor/dualcut")
+        .issue_url("https://github.com/hanthor/dualcut/issues")
+        .comments("Dual-mode video editor: a GUI for humans and a JSON/TypeScript surface for agents, on one GStreamer Editing Services engine.")
+        .build();
+    about.present(window);
+}
+
 fn fx_hash(s: &str) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in s.bytes() {
@@ -1717,10 +2004,24 @@ fn build_ui(app: &adw::Application) -> Result<()> {
             let duration = project.duration();
             (timeline, Some(project), Some(path), duration)
         }
-        other => (build_demo_timeline(other.as_deref())?, None, None, 8.0),
+        Some(other) => (build_demo_timeline(Some(other.as_str()))?, None, None, 8.0),
+        None => {
+            // No file argument: start an unsaved "New Project" (#15).
+            let project = dualcut_engine::templates::new_project("New Project");
+            let timeline = compile_project(&project, std::path::Path::new("."))?;
+            let duration = project.duration();
+            (timeline, Some(project), None, duration)
+        }
     };
 
     let (pipeline, paintable) = make_pipeline(&timeline)?;
+    let window_title = match &project_path {
+        Some(p) => format!(
+            "dualcut — {}",
+            p.file_name().and_then(|n| n.to_str()).unwrap_or("project")
+        ),
+        None => "dualcut — New Project (unsaved)".to_string(),
+    };
     let mtime = project_path.as_ref().and_then(|p| p.metadata().ok()?.modified().ok());
 
     // Agent surface: HTTP API over the project file (the mtime watcher
@@ -1980,7 +2281,65 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     }
 
     let bar = adw::HeaderBar::new();
-    bar.pack_start(&play);
+
+    // Open (split button with recents) + Import (#15).
+    let open_btn = adw::SplitButton::new();
+    open_btn.set_label("Open");
+    {
+        let editor = editor.clone();
+        open_btn.connect_clicked(move |btn| {
+            let window = btn.root().and_downcast::<gtk::Window>();
+            let dialog = gtk::FileDialog::builder().title("Open project").build();
+            let filter = gtk::FileFilter::new();
+            filter.add_suffix("json");
+            let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+            filters.append(&filter);
+            dialog.set_filters(Some(&filters));
+            let editor = editor.clone();
+            dialog.open(window.as_ref(), gtk::gio::Cancellable::NONE, move |res| {
+                if let Ok(file) = res
+                    && let Some(path) = file.path() {
+                        editor.open_project(&path);
+                    }
+            });
+        });
+    }
+    {
+        // Recents popover.
+        let pop = gtk::Popover::new();
+        let list = gtk::ListBox::new();
+        list.set_selection_mode(gtk::SelectionMode::None);
+        list.add_css_class("boxed-list");
+        for path in load_recents() {
+            let row = gtk::Button::with_label(
+                path.file_name().and_then(|n| n.to_str()).unwrap_or("project"),
+            );
+            row.add_css_class("flat");
+            row.set_tooltip_text(path.to_str());
+            let editor = editor.clone();
+            let pop2 = pop.clone();
+            row.connect_clicked(move |_| {
+                pop2.popdown();
+                editor.open_project(&path);
+            });
+            let lbrow = gtk::ListBoxRow::new();
+            lbrow.set_child(Some(&row));
+            list.append(&lbrow);
+        }
+        pop.set_child(Some(&list));
+        open_btn.set_popover(Some(&pop));
+    }
+    bar.pack_start(&open_btn);
+    let import_btn = gtk::Button::with_label("Import");
+    import_btn.set_tooltip_text(Some("Import media into the library"));
+    {
+        let editor = editor.clone();
+        import_btn.connect_clicked(move |btn| {
+            let window = btn.root().and_downcast::<gtk::Window>();
+            editor.import_media(window.as_ref());
+        });
+    }
+    bar.pack_start(&import_btn);
     let timeline_toggle = gtk::ToggleButton::new();
     timeline_toggle.set_icon_name("view-continuous-symbolic");
     timeline_toggle.set_tooltip_text(Some("Toggle timeline pane"));
@@ -1996,12 +2355,26 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         });
     }
     bar.pack_start(&export);
-    bar.pack_end(&time_label);
+    let menu = gtk::gio::Menu::new();
+    menu.append(Some("New Project"), Some("app.new-project"));
+    menu.append(Some("Save Project As…"), Some("app.save-as"));
+    menu.append(Some("Install Agent Skills…"), Some("app.install-skills"));
+    menu.append(Some("Preferences"), Some("app.preferences"));
+    let sec2 = gtk::gio::Menu::new();
+    sec2.append(Some("Keyboard Shortcuts"), Some("app.shortcuts"));
+    sec2.append(Some("About Dualcut"), Some("app.about"));
+    menu.append_section(None, &sec2);
+    let burger = gtk::MenuButton::new();
+    burger.set_icon_name("open-menu-symbolic");
+    burger.set_menu_model(Some(&menu));
+    bar.pack_end(&burger);
 
     let transport = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     transport.set_margin_start(12);
     transport.set_margin_end(12);
+    transport.append(&play);
     transport.append(&seek);
+    transport.append(&time_label);
 
     // Bottom pane: the multitrack timeline, toggleable (GNOME Builder style).
     let strip = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -2027,11 +2400,34 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     center.append(&transport);
 
     // Left: Media | Code tabs.
-    let media_list = gtk::ListBox::new();
-    media_list.add_css_class("boxed-list");
-    media_list.set_selection_mode(gtk::SelectionMode::None);
+    let media_grid = gtk::FlowBox::new();
+    media_grid.set_selection_mode(gtk::SelectionMode::None);
+    media_grid.set_min_children_per_line(2);
+    media_grid.set_max_children_per_line(3);
+    media_grid.set_homogeneous(true);
+    let media_empty = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    media_empty.set_valign(gtk::Align::Center);
+    media_empty.set_margin_top(24);
+    let empty_label = gtk::Label::new(Some("No media imported —
+add files to import first"));
+    empty_label.add_css_class("dim-label");
+    empty_label.set_justify(gtk::Justification::Center);
+    media_empty.append(&empty_label);
+    let empty_import = gtk::Button::with_label("Import…");
+    empty_import.set_halign(gtk::Align::Center);
+    {
+        let editor = editor.clone();
+        empty_import.connect_clicked(move |btn| {
+            let window = btn.root().and_downcast::<gtk::Window>();
+            editor.import_media(window.as_ref());
+        });
+    }
+    media_empty.append(&empty_import);
+    let media_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    media_page.append(&media_empty);
+    media_page.append(&media_grid);
     let media_scroll = gtk::ScrolledWindow::new();
-    media_scroll.set_child(Some(&media_list));
+    media_scroll.set_child(Some(&media_page));
     media_scroll.set_vexpand(true);
 
     let code_buffer = gtk::TextBuffer::new(None);
@@ -2075,7 +2471,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     templates_scroll.set_vexpand(true);
 
     let left_tabs = gtk::Notebook::new();
-    left_tabs.append_page(&media_scroll, Some(&gtk::Label::new(Some("Media"))));
+    left_tabs.append_page(&media_scroll, Some(&gtk::Label::new(Some("Library"))));
     left_tabs.append_page(&templates_scroll, Some(&gtk::Label::new(Some("Templates"))));
     left_tabs.append_page(&code_page, Some(&gtk::Label::new(Some("Code"))));
     left_tabs.set_size_request(260, -1);
@@ -2125,7 +2521,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("dualcut")
+        .title(&window_title)
         .default_width(1120)
         .default_height(700)
         .content(&content)
@@ -2204,11 +2600,75 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
+    // App actions for the hamburger menu (#13, #14).
+    {
+        let make = |name: &str| gtk::gio::SimpleAction::new(name, None);
+        let a = make("new-project");
+        {
+            let editor = editor.clone();
+            a.connect_activate(move |_, _| {
+                let project = dualcut_engine::templates::new_project("New Project");
+                {
+                    let mut st = editor.state.borrow_mut();
+                    st.project_path = None;
+                    st.undo.clear();
+                    st.redo.clear();
+                    st.selected = None;
+                }
+                if let Some(win) = editor.window() {
+                    win.set_title(Some("dualcut — New Project (unsaved)"));
+                }
+                editor.rebuild_in_memory(project);
+            });
+        }
+        app.add_action(&a);
+        let a = make("save-as");
+        {
+            let editor = editor.clone();
+            a.connect_activate(move |_, _| {
+                let win = editor.window();
+                editor.save_project_as(win.as_ref());
+            });
+        }
+        app.add_action(&a);
+        let a = make("install-skills");
+        {
+            let editor = editor.clone();
+            a.connect_activate(move |_, _| {
+                let win = editor.window();
+                show_skills_dialog(&editor, win.as_ref());
+            });
+        }
+        app.add_action(&a);
+        let a = make("about");
+        {
+            let editor = editor.clone();
+            a.connect_activate(move |_, _| {
+                show_about(editor.window().as_ref());
+            });
+        }
+        app.add_action(&a);
+        for stub in ["preferences", "shortcuts"] {
+            let a = make(stub);
+            a.set_enabled(false);
+            app.add_action(&a);
+        }
+    }
+
+    // UI smoke-test hook: DUALCUT_TEST_ACTION=<name> activates an app
+    // action shortly after startup (headless CI has no reliable pointer).
+    if let Ok(name) = std::env::var("DUALCUT_TEST_ACTION") {
+        let app = app.clone();
+        glib::timeout_add_seconds_local_once(2, move || {
+            gtk::prelude::ActionGroupExt::activate_action(&app, &name, None);
+        });
+    }
+
     window.present();
     start_paused(&pipeline)?;
 
     *editor.ui.borrow_mut() =
-        Some(Ui { picture, seek, strip, inspector, media_list, templates_list, code_buffer });
+        Some(Ui { picture, seek, strip, inspector, media_grid, media_empty, templates_list, code_buffer });
     editor.rebuild_strip();
     editor.rebuild_inspector();
     editor.rebuild_media();

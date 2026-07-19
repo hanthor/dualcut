@@ -11,6 +11,10 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub meta: Meta,
+    /// Media files the user imported into the project's library. Paths
+    /// are relative to the project file (or absolute).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub library: Vec<String>,
     /// Reusable compositions, instantiated by `Layer::CompRef`.
     #[serde(default)]
     pub defs: BTreeMap<String, CompDef>,

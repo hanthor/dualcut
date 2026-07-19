@@ -156,6 +156,7 @@ pub fn template_png(
             height: project.meta.height,
             fps: project.meta.fps,
         },
+        library: Vec::new(),
         defs: project.defs.clone(),
         scenes: vec![Scene {
             id: "tpl".into(),
