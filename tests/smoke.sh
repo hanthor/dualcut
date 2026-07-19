@@ -87,7 +87,13 @@ PYEOF
 check "chromakey keys out green" $?
 
 # ---- 4. every export profile produces a nonempty file ----------------
-for prof in webm vp9 ogg flac wav mkv; do
+# m4a is the one profile here that needs an AAC encoder autoplugged by
+# caps (avenc_aac ships Rank::NONE upstream and is excluded from
+# encodebin's search unless we bump it at init) -- this is the only
+# AAC-bearing profile that doesn't also need x264/x265 (unavailable in
+# plain `cargo build`, only in the flatpak), so it's what actually
+# catches an AAC-encoder regression in CI.
+for prof in webm vp9 ogg flac wav mkv m4a; do
   ext=$prof; [ "$prof" = "vp9" ] && ext=webm; [ "$prof" = "mkv" ] && prof=ffv1
   "$BIN" "$WORK/demo.json" "$WORK/p-$prof.$ext" "$prof" > /dev/null 2>&1 \
     && [ -s "$WORK/p-$prof.$ext" ]

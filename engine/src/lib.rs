@@ -30,6 +30,15 @@ pub fn init() -> Result<()> {
     ges::init().context("initializing GES")?;
     #[cfg(feature = "vector")]
     vellosrc::register().context("registering vellosrc")?;
+    // avenc_aac ships with Rank::None upstream (libav leaves AAC encoder
+    // selection to the app rather than autoplugging its own), which
+    // excludes it from encodebin's caps-based encoder search entirely --
+    // every AAC-bearing export profile (mp4, h265, av1) failed with
+    // "Couldn't create encoder for format audio/mpeg" even though the
+    // element is present and works fine. Bump it so encodebin finds it.
+    if let Some(feature) = gst::Registry::get().lookup_feature("avenc_aac") {
+        feature.set_rank(gst::Rank::SECONDARY);
+    }
     Ok(())
 }
 

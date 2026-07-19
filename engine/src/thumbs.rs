@@ -95,7 +95,7 @@ pub fn proxy_mp4(cache_dir: &Path, uri: &str) -> Result<PathBuf> {
     let part = cache_dir.join(format!("proxy-{:016x}.mkv.part", fxhash(uri)));
     let _ = std::fs::remove_file(&part);
     let video = format!(
-        "uridecodebin uri={uri} name=d \
+        "uridecodebin uri=\"{uri}\" name=d \
          d. ! queue ! videoconvert ! videoscale ! \
          video/x-raw,width={PROXY_W},pixel-aspect-ratio=1/1 ! \
          jpegenc quality=70 ! queue ! matroskamux name=m ! \
