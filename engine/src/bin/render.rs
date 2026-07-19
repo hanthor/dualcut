@@ -90,6 +90,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Optional third argument overrides the encoding profile
+    // (mp4|webm|h265|vp9|av1|prores); default derives from the extension.
+    let mut profile_override: Option<String> = None;
     let (timeline, out) = if first.ends_with(".json") {
         let out = args.next().unwrap_or_else(|| "out.mp4".into());
         let json = std::fs::read_to_string(&first).with_context(|| format!("reading {first}"))?;
@@ -109,6 +112,7 @@ fn main() -> Result<()> {
             project.overlays.len(),
             project.duration()
         );
+        profile_override = args.next();
         (compiled.timeline, out)
     } else {
         let media_uri = args.next();
@@ -121,7 +125,7 @@ fn main() -> Result<()> {
     let out_abs = std::path::absolute(&out)?;
     let uri = format!("file://{}", out_abs.display());
     pipeline
-        .set_render_settings(&uri, &encoding_profile(&out)?)
+        .set_render_settings(&uri, &encoding_profile(profile_override.as_deref().unwrap_or(&out))?)
         .context("setting render settings")?;
     pipeline
         .set_mode(ges::PipelineFlags::RENDER)

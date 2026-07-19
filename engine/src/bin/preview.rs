@@ -2006,7 +2006,28 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
     content.append(&gtk::Label::builder().label("Output file").halign(gtk::Align::Start).build());
     content.append(&out_entry);
 
-    let profile = gtk::DropDown::from_strings(&["mp4 (H.264/AAC)", "webm (VP8/Vorbis)"]);
+    let profile = gtk::DropDown::from_strings(&[
+        "mp4 (H.264/AAC)",
+        "webm (VP8/Vorbis)",
+        "mp4 (H.265/AAC)",
+        "webm (VP9/Opus)",
+        "mp4 (AV1/AAC)",
+        "mov (ProRes/PCM)",
+    ]);
+    {
+        let out_entry = out_entry.clone();
+        profile.connect_selected_notify(move |dd| {
+            let ext = match dd.selected() {
+                1 | 3 => "webm",
+                5 => "mov",
+                _ => "mp4",
+            };
+            let text = out_entry.text().to_string();
+            if let Some(stem) = text.rsplit_once('.').map(|(s, _)| s.to_string()) {
+                out_entry.set_text(&format!("{stem}.{ext}"));
+            }
+        });
+    }
     content.append(&gtk::Label::builder().label("Format").halign(gtk::Align::Start).build());
     content.append(&profile);
 
@@ -2022,7 +2043,15 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
         let profile = profile.clone();
         go.connect_clicked(move |btn| {
             let out = out_entry.text().to_string();
-            let prof = if profile.selected() == 1 { "webm" } else { "mp4" }.to_string();
+            let prof = match profile.selected() {
+                1 => "webm",
+                2 => "h265",
+                3 => "vp9",
+                4 => "av1",
+                5 => "prores",
+                _ => "mp4",
+            }
+            .to_string();
             btn.set_sensitive(false);
             status.set_text("Rendering…");
             let (tx, rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();

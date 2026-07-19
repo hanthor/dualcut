@@ -80,8 +80,69 @@ pub fn encoding_profile(name: &str) -> anyhow::Result<gst_pbutils::EncodingConta
     match name.rsplit('.').next().unwrap_or(name) {
         "mp4" | "h264" => Ok(mp4_profile()),
         "webm" | "vp8" => Ok(webm_profile()),
-        other => anyhow::bail!("unknown encoding profile {other:?} (use mp4 or webm)"),
+        "h265" | "hevc" => Ok(mp4_video_profile("video/x-h265")),
+        "vp9" => Ok(vp9_profile()),
+        "av1" => Ok(mp4_video_profile("video/x-av1")),
+        "prores" | "mov" => Ok(prores_profile()),
+        other => anyhow::bail!(
+            "unknown encoding profile {other:?} (use mp4, webm, h265, vp9, av1, or prores)"
+        ),
     }
+}
+
+/// MP4 container with the given video codec caps + AAC audio.
+pub fn mp4_video_profile(video_caps: &str) -> gst_pbutils::EncodingContainerProfile {
+    let video = gst_pbutils::EncodingVideoProfile::builder(
+        &gst::Caps::builder(video_caps).build(),
+    )
+    .build();
+    let audio = gst_pbutils::EncodingAudioProfile::builder(
+        &gst::Caps::builder("audio/mpeg").field("mpegversion", 4i32).build(),
+    )
+    .build();
+    gst_pbutils::EncodingContainerProfile::builder(
+        &gst::Caps::builder("video/quicktime").field("variant", "iso").build(),
+    )
+    .name("dualcut-mp4v")
+    .add_profile(video)
+    .add_profile(audio)
+    .build()
+}
+
+/// WebM with VP9 + Opus.
+pub fn vp9_profile() -> gst_pbutils::EncodingContainerProfile {
+    let video = gst_pbutils::EncodingVideoProfile::builder(
+        &gst::Caps::builder("video/x-vp9").build(),
+    )
+    .build();
+    let audio = gst_pbutils::EncodingAudioProfile::builder(
+        &gst::Caps::builder("audio/x-opus").build(),
+    )
+    .build();
+    gst_pbutils::EncodingContainerProfile::builder(&gst::Caps::builder("video/webm").build())
+        .name("dualcut-vp9")
+        .add_profile(video)
+        .add_profile(audio)
+        .build()
+}
+
+/// QuickTime with ProRes + PCM — an editing/interchange master.
+pub fn prores_profile() -> gst_pbutils::EncodingContainerProfile {
+    let video = gst_pbutils::EncodingVideoProfile::builder(
+        &gst::Caps::builder("video/x-prores").build(),
+    )
+    .build();
+    let audio = gst_pbutils::EncodingAudioProfile::builder(
+        &gst::Caps::builder("audio/x-raw").field("format", "S24LE").build(),
+    )
+    .build();
+    gst_pbutils::EncodingContainerProfile::builder(
+        &gst::Caps::builder("video/quicktime").build(),
+    )
+    .name("dualcut-prores")
+    .add_profile(video)
+    .add_profile(audio)
+    .build()
 }
 
 /// WebM (VP8 + Vorbis) profile.
