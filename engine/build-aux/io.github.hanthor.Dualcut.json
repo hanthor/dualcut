@@ -108,7 +108,8 @@
         "-DCMAKE_BUILD_TYPE=Release",
         "-DBUILD_APPS=OFF",
         "-DBUILD_DEC=OFF",
-        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+        "-DUSE_CPUINFO=OFF"
       ],
       "sources": [
         {

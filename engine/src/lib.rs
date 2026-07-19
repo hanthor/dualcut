@@ -84,10 +84,56 @@ pub fn encoding_profile(name: &str) -> anyhow::Result<gst_pbutils::EncodingConta
         "vp9" => Ok(vp9_profile()),
         "av1" => Ok(mp4_video_profile("video/x-av1")),
         "prores" | "mov" => Ok(prores_profile()),
+        "ffv1" | "mkv" => Ok(ffv1_profile()),
+        "m4a" => Ok(audio_profile(
+            "video/quicktime",
+            "audio/mpeg",
+            Some(("mpegversion", 4)),
+        )),
+        "ogg" | "opus" => Ok(audio_profile("application/ogg", "audio/x-opus", None)),
+        "flac" => Ok(audio_profile("application/ogg", "audio/x-flac", None)),
+        "mp3" => Ok(audio_profile("application/x-id3", "audio/mpeg", Some(("mpegversion", 1)))),
+        "wav" => Ok(audio_profile("audio/x-wav", "audio/x-raw", None)),
         other => anyhow::bail!(
-            "unknown encoding profile {other:?} (use mp4, webm, h265, vp9, av1, or prores)"
+            "unknown encoding profile {other:?} (video: mp4, webm, h265, vp9, av1, prores, ffv1; audio: m4a, ogg, flac, mp3, wav)"
         ),
     }
+}
+
+/// Lossless archival: FFV1 + FLAC in Matroska.
+pub fn ffv1_profile() -> gst_pbutils::EncodingContainerProfile {
+    let video = gst_pbutils::EncodingVideoProfile::builder(
+        &gst::Caps::builder("video/x-ffv").build(),
+    )
+    .build();
+    let audio = gst_pbutils::EncodingAudioProfile::builder(
+        &gst::Caps::builder("audio/x-flac").build(),
+    )
+    .build();
+    gst_pbutils::EncodingContainerProfile::builder(
+        &gst::Caps::builder("video/x-matroska").build(),
+    )
+    .name("dualcut-ffv1")
+    .add_profile(video)
+    .add_profile(audio)
+    .build()
+}
+
+/// Audio-only export: container caps + one audio stream.
+pub fn audio_profile(
+    container: &str,
+    audio_caps: &str,
+    extra: Option<(&str, i32)>,
+) -> gst_pbutils::EncodingContainerProfile {
+    let mut caps = gst::Caps::builder(audio_caps);
+    if let Some((k, v)) = extra {
+        caps = caps.field(k, v);
+    }
+    let audio = gst_pbutils::EncodingAudioProfile::builder(&caps.build()).build();
+    gst_pbutils::EncodingContainerProfile::builder(&gst::Caps::builder(container).build())
+        .name("dualcut-audio")
+        .add_profile(audio)
+        .build()
 }
 
 /// MP4 container with the given video codec caps + AAC audio.
