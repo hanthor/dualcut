@@ -23,7 +23,8 @@ use gtk::glib;
 use gtk4 as gtk;
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::SystemTime;
@@ -201,6 +202,10 @@ struct Ui {
 struct Editor {
     state: Shared,
     ui: RefCell<Option<Ui>>,
+    /// True while a render thread is active (#35).
+    exporting: Cell<bool>,
+    /// Exports waiting behind the active render: (output path, profile).
+    export_queue: RefCell<VecDeque<(String, String)>>,
 }
 
 impl Editor {
@@ -348,6 +353,15 @@ impl Editor {
         toast.set_timeout(5);
         let this = self.clone();
         toast.connect_button_clicked(move |_| this.undo());
+        ui.toasts.add_toast(toast);
+    }
+
+    /// Transient notification without an action button.
+    fn toast(&self, message: &str) {
+        let ui = self.ui.borrow();
+        let Some(ui) = ui.as_ref() else { return };
+        let toast = adw::Toast::new(message);
+        toast.set_timeout(5);
         ui.toasts.add_toast(toast);
     }
 
@@ -2367,6 +2381,193 @@ fn export_target(dir: &std::path::Path, name: &str) -> String {
     dir.join(name).display().to_string()
 }
 
+/// Kicks off (or queues) one render: (Export button, output path, profile).
+type StartRender = Rc<dyn Fn(gtk::Button, String, String)>;
+
+/// Locate a whisper.cpp CLI on PATH (#37): `whisper-cli` (current name)
+/// first, then the older `whisper-cpp`.
+fn find_whisper() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for name in ["whisper-cli", "whisper-cpp"] {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// Parse whisper.cpp `--output-json` into (start, end, text) seconds.
+/// Shape (docs/recipes/auto-captions.md): `transcription[].offsets.{from,to}`
+/// in milliseconds plus `text`.
+fn parse_whisper_segments(json: &str) -> std::result::Result<Vec<(f64, f64, String)>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("bad whisper JSON: {e}"))?;
+    let segments = value
+        .get("transcription")
+        .and_then(|t| t.as_array())
+        .ok_or_else(|| "whisper JSON has no transcription array".to_string())?;
+    Ok(segments
+        .iter()
+        .filter_map(|seg| {
+            let offsets = seg.get("offsets")?;
+            let from = offsets.get("from")?.as_f64()? / 1000.0;
+            let to = offsets.get("to")?.as_f64()? / 1000.0;
+            let text = seg.get("text")?.as_str()?.to_string();
+            Some((from, to, text))
+        })
+        .collect())
+}
+
+/// Worker-thread half of auto-captions (#37): export the project audio to
+/// a temp wav, transcribe it with whisper.cpp, parse the segments.
+fn run_captions_job(
+    project_json: String,
+    base_dir: PathBuf,
+    whisper: PathBuf,
+    model: String,
+) -> std::result::Result<Vec<(f64, f64, String)>, String> {
+    let tmp = std::env::temp_dir().join(format!("dualcut-captions-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("temp dir: {e}"))?;
+    let wav = tmp.join("voice.wav");
+    dualcut_engine::render_project(&project_json, &base_dir, &wav.to_string_lossy(), "wav")
+        .map_err(|e| format!("audio export failed: {e:#}"))?;
+    let prefix = tmp.join("voice");
+    let output = std::process::Command::new(&whisper)
+        .arg("-m")
+        .arg(&model)
+        .arg("-f")
+        .arg(&wav)
+        .arg("--output-json")
+        .arg("--output-file")
+        .arg(&prefix)
+        .output()
+        .map_err(|e| format!("running {}: {e}", whisper.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "whisper failed: {}",
+            stderr.lines().last().unwrap_or("unknown error")
+        ));
+    }
+    let json = std::fs::read_to_string(prefix.with_extension("json"))
+        .map_err(|e| format!("reading whisper output: {e}"))?;
+    parse_whisper_segments(&json)
+}
+
+/// Land transcript segments on the `subtitles` overlay track (#37).
+fn apply_captions(editor: &Rc<Editor>, segments: &[(f64, f64, String)]) {
+    let project = editor.state.borrow().project.clone();
+    let Some(mut project) = project else { return };
+    let mut clips = dualcut_engine::captions_to_clips(segments);
+    if clips.is_empty() {
+        editor.toast("No speech found");
+        return;
+    }
+    // Clip ids are unique document-wide: skip past any existing sub-N.
+    let used: std::collections::HashSet<String> = project
+        .scenes
+        .iter()
+        .flat_map(|s| s.layers.iter())
+        .chain(project.overlays.iter().flat_map(|t| t.clips.iter()))
+        .map(|c| c.id.clone())
+        .collect();
+    let mut next = 0usize;
+    for clip in &mut clips {
+        while used.contains(&format!("sub-{next}")) {
+            next += 1;
+        }
+        clip.id = format!("sub-{next}");
+        next += 1;
+    }
+    let count = clips.len();
+    match project.overlays.iter_mut().find(|t| t.id == "subtitles") {
+        Some(track) => track.clips.extend(clips),
+        None => project.overlays.push(document::OverlayTrack {
+            id: "subtitles".to_string(),
+            muted: false,
+            hidden: false,
+            name: "Subtitles".to_string(),
+            clips,
+        }),
+    }
+    editor.commit_document(project);
+    editor.toast(&format!("✓ {count} captions added"));
+}
+
+/// Auto-captions GUI flow (#37): explain, confirm, transcribe on a worker
+/// thread, then commit the subtitle clips as one undoable mutation.
+fn show_captions_dialog(editor: &Rc<Editor>) {
+    let Some(whisper) = find_whisper() else {
+        editor.toast("No whisper-cli or whisper-cpp found on PATH");
+        return;
+    };
+    let (project_json, base_dir) = {
+        let st = editor.state.borrow();
+        let Some(project) = st.project.as_ref() else { return };
+        (project.to_json(), editor.base_dir())
+    };
+    let whisper_name = whisper
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("whisper")
+        .to_string();
+    let dialog = adw::AlertDialog::new(
+        Some("Generate captions?"),
+        Some(&format!(
+            "Dualcut exports the project audio, transcribes it locally with \
+             {whisper_name}, and adds the segments as text clips on a \
+             Subtitles overlay track.\n\nThe model comes from the \
+             DUALCUT_WHISPER_MODEL environment variable (path to a ggml \
+             model file)."
+        )),
+    );
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("generate", "Generate");
+    dialog.set_response_appearance("generate", adw::ResponseAppearance::Suggested);
+    dialog.set_default_response(Some("generate"));
+    let this = editor.clone();
+    dialog.connect_response(Some("generate"), move |_, _| {
+        let model = std::env::var("DUALCUT_WHISPER_MODEL")
+            .ok()
+            .filter(|m| !m.trim().is_empty());
+        let Some(model) = model else {
+            this.toast("Set DUALCUT_WHISPER_MODEL to a whisper ggml model path first");
+            return;
+        };
+        this.toast("Transcribing… captions will appear when ready");
+        let (tx, rx) =
+            std::sync::mpsc::channel::<std::result::Result<Vec<(f64, f64, String)>, String>>();
+        {
+            let project_json = project_json.clone();
+            let base_dir = base_dir.clone();
+            let whisper = whisper.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(run_captions_job(project_json, base_dir, whisper, model));
+            });
+        }
+        let this = this.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+            match rx.try_recv() {
+                Ok(Ok(segments)) => {
+                    apply_captions(&this, &segments);
+                    glib::ControlFlow::Break
+                }
+                Ok(Err(e)) => {
+                    eprintln!("captions: {e}");
+                    this.toast(&format!("✗ captions failed: {e}"));
+                    glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(_) => glib::ControlFlow::Break,
+            }
+        });
+    });
+    dialog.present(editor.window().as_ref());
+}
+
 fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
     let (project_json, base_dir, title) = {
         let st = editor.state.borrow();
@@ -2479,13 +2680,31 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
         let status = status.clone();
         let out_entry = out_entry.clone();
         let profile = profile.clone();
-        let start_render: Rc<dyn Fn(gtk::Button, String, String)> = {
+        // Self-referencing so a finished render can start the next queued
+        // export (#35); the cell is filled right after construction. The
+        // poll closure keeps everything alive even if the dialog closes,
+        // so renders (and the queue) survive closing the window.
+        let start_render_cell: Rc<RefCell<Option<StartRender>>> = Rc::new(RefCell::new(None));
+        let start_render: StartRender = {
             let status = status.clone();
             let bar = bar.clone();
             let project_json = project_json.clone();
             let base_dir = base_dir.clone();
+            let editor = editor.clone();
+            let cell = start_render_cell.clone();
             Rc::new(move |btn: gtk::Button, out: String, prof: String| {
-                btn.set_sensitive(false);
+                // A render is already running (possibly started from an
+                // earlier dialog): queue this one instead (#35).
+                if editor.exporting.get() {
+                    let queued = {
+                        let mut q = editor.export_queue.borrow_mut();
+                        q.push_back((out, prof));
+                        q.len()
+                    };
+                    status.set_text(&format!("Rendering… ({queued} queued)"));
+                    return;
+                }
+                editor.exporting.set(true);
                 status.set_text("Rendering…");
                 bar.set_visible(true);
                 bar.set_fraction(0.0);
@@ -2516,6 +2735,8 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
                 }
                 let status = status.clone();
                 let bar = bar.clone();
+                let editor = editor.clone();
+                let cell = cell.clone();
                 glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
                     while let Ok(p) = prx.try_recv() {
                         bar.set_fraction(p);
@@ -2524,23 +2745,33 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
                         Ok(Ok(())) => {
                             status.set_text(&format!("✓ exported {out}"));
                             bar.set_fraction(1.0);
-                            btn.set_sensitive(true);
-                            glib::ControlFlow::Break
+                            editor.toast(&format!("✓ exported {out}"));
                         }
                         Ok(Err(e)) => {
                             // Mirror to the terminal so GUI and console
                             // errors always match (#27).
                             eprintln!("export failed: {e}");
                             status.set_text(&format!("✗ {e}"));
-                            btn.set_sensitive(true);
-                            glib::ControlFlow::Break
+                            editor.toast(&format!("✗ export failed: {e}"));
                         }
-                        Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                        Err(_) => glib::ControlFlow::Break,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            return glib::ControlFlow::Continue
+                        }
+                        Err(_) => {}
                     }
+                    // Render finished (or died): start the next queued one.
+                    editor.exporting.set(false);
+                    let next = editor.export_queue.borrow_mut().pop_front();
+                    if let Some((next_out, next_prof)) = next
+                        && let Some(start) = cell.borrow().clone()
+                    {
+                        start(btn.clone(), next_out, next_prof);
+                    }
+                    glib::ControlFlow::Break
                 });
             })
         };
+        *start_render_cell.borrow_mut() = Some(start_render.clone());
         go.connect_clicked(move |btn| {
             let out = export_target(&out_dir.borrow(), out_entry.text().trim());
             let prof = match profile.selected() {
@@ -2651,6 +2882,8 @@ fn build_ui(app: &adw::Application) -> Result<()> {
             self_write: false,
         })),
         ui: RefCell::new(None),
+        exporting: Cell::new(false),
+        export_queue: RefCell::new(VecDeque::new()),
     });
 
     let picture = gtk::Picture::builder()
@@ -2991,6 +3224,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     let menu = gtk::gio::Menu::new();
     menu.append(Some("New Project"), Some("app.new-project"));
     menu.append(Some("Save Project As…"), Some("app.save-as"));
+    menu.append(Some("Generate Captions…"), Some("app.captions"));
     menu.append(Some("Install Agent Skills…"), Some("app.install-skills"));
     menu.append(Some("Preferences"), Some("app.preferences"));
     let sec2 = gtk::gio::Menu::new();
@@ -3445,6 +3679,15 @@ fn build_ui(app: &adw::Application) -> Result<()> {
                 let win = editor.window();
                 editor.save_project_as(win.as_ref());
             });
+        }
+        app.add_action(&a);
+        // Auto-captions (#37): present but greyed out without a local
+        // whisper.cpp binary — the menu documents the feature either way.
+        let a = make("captions");
+        a.set_enabled(find_whisper().is_some());
+        {
+            let editor = editor.clone();
+            a.connect_activate(move |_, _| show_captions_dialog(&editor));
         }
         app.add_action(&a);
         let a = make("install-skills");

@@ -295,6 +295,34 @@ pub fn render_project_with_progress(
     Ok(compiled.warnings)
 }
 
+/// Convert timed transcript segments `(start, end, text)` in seconds into
+/// styled subtitle clips: centered, outlined text readable over any
+/// footage, mirroring docs/recipes/auto-captions.md (#37). Blank
+/// segments are dropped; times are rounded to 10 ms like the recipe.
+pub fn captions_to_clips(segments: &[(f64, f64, String)]) -> Vec<document::Clip> {
+    segments
+        .iter()
+        .filter(|(_, _, text)| !text.trim().is_empty())
+        .enumerate()
+        .map(|(i, (t0, t1, text))| document::Clip {
+            id: format!("sub-{i}"),
+            start: (t0 * 100.0).round() / 100.0,
+            duration: (((t1 - t0) * 100.0).round() / 100.0).max(0.01),
+            element: document::Element::Text {
+                text: text.trim().to_string(),
+                font: "Sans Semi-Bold 22".to_string(),
+                color: "#ffffff".to_string(),
+                align: Some(document::TextAlign::Center),
+                outline: Some("#000000".to_string()),
+                shadow: false,
+            },
+            transform: document::Transform::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        })
+        .collect()
+}
+
 /// Run a pipeline until EOS or error, printing progress.
 pub fn run_to_eos(pipeline: &ges::Pipeline) -> Result<()> {
     let bus = pipeline.bus().context("pipeline has no bus")?;
@@ -320,4 +348,42 @@ pub fn run_to_eos(pipeline: &ges::Pipeline) -> Result<()> {
     }
     pipeline.set_state(gst::State::Null)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn captions_become_centered_outlined_text_clips() {
+        let segs = vec![
+            (0.0, 1.234, " Hello world ".to_string()),
+            (1.5, 3.0, "Second line".to_string()),
+            (3.0, 3.5, "   ".to_string()), // blank: dropped
+        ];
+        let clips = captions_to_clips(&segs);
+        assert_eq!(clips.len(), 2);
+        assert_eq!(clips[0].id, "sub-0");
+        assert!((clips[0].start - 0.0).abs() < 1e-9);
+        assert!((clips[0].duration - 1.23).abs() < 1e-9);
+        match &clips[0].element {
+            document::Element::Text { text, font, color, align, outline, shadow } => {
+                assert_eq!(text, "Hello world");
+                assert_eq!(font, "Sans Semi-Bold 22");
+                assert_eq!(color, "#ffffff");
+                assert_eq!(*align, Some(document::TextAlign::Center));
+                assert_eq!(outline.as_deref(), Some("#000000"));
+                assert!(!shadow);
+            }
+            other => panic!("expected text clip, got {other:?}"),
+        }
+        assert_eq!(clips[1].id, "sub-1");
+        assert!((clips[1].start - 1.5).abs() < 1e-9);
+        assert!((clips[1].duration - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn captions_from_empty_transcript_are_empty() {
+        assert!(captions_to_clips(&[]).is_empty());
+    }
 }

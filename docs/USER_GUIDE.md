@@ -89,10 +89,14 @@ automatically.
 
 ## Menu
 
-The hamburger menu holds *New Project*, *Save Project As…*, *Install
-Agent Skills…* (sets up the dualcut skill for coding agents in
-`~/.agents/skills`, `~/.claude/skills`, or a directory of your
-choice), and *About*.
+The hamburger menu holds *New Project*, *Save Project As…*, *Generate
+Captions…* (transcribes the project audio with a local whisper.cpp
+binary — `whisper-cli` or `whisper-cpp` on your PATH, model set via
+`DUALCUT_WHISPER_MODEL` — and lands the segments as styled text clips
+on a Subtitles overlay track; greyed out when no whisper binary is
+installed), *Install Agent Skills…* (sets up the dualcut skill for
+coding agents in `~/.agents/skills`, `~/.claude/skills`, or a
+directory of your choice), and *About*.
 
 ![About](guide/about.png)
 

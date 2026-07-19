@@ -56,7 +56,7 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 | Title templates | ✅ | ✅ | ✅ | ✅ (defs + thumbnails) | ✅ |
 | Parameterised/nested templates | 🟡 | ❌ | ❌ | ✅ | ✅ (defs nest) |
 | Save selection as template | 🟡 | ❌ | 🟡 | ✅ | ✅ |
-| Auto-captions (STT) | ✅ | ❌ | 🟡 | ❌ | ❌ |
+| Auto-captions (STT) | ✅ | ❌ | 🟡 | 🟡 (needs local whisper.cpp + model) | 🟡 (recipe via agent surface) |
 
 ## Audio
 
@@ -96,9 +96,9 @@ Legend: ✅ solid · 🟡 partial/basic · ❌ absent · — not applicable
 
 1. **Speed ramping** — constant rate shipped; keyframed curves are a
    follow-up.
-2. **Auto-captions GUI** — agent recipe + in-app "Generate Captions"
-   (requires a local whisper.cpp binary) both ship; fully bundled STT
-   is future work.
+2. **Auto-captions bundling** — *Generate Captions…* in the menu and
+   the agent recipe both drive a local whisper.cpp install (#37); the
+   remaining gap is bundling STT so it works out of the box.
 3. **Bezier masks** — chroma key + rectangular crop ship; freeform
    masks need a compositor story.
 4. **Denoise** — EQ + compressor ship; needs a flatpak-viable plugin.
