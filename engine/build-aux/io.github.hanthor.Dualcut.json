@@ -84,7 +84,8 @@
       "subdir": "source",
       "config-opts": [
         "-DCMAKE_BUILD_TYPE=Release",
-        "-DENABLE_CLI=OFF"
+        "-DENABLE_CLI=OFF",
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
       ],
       "sources": [
         {
@@ -100,7 +101,8 @@
       "config-opts": [
         "-DCMAKE_BUILD_TYPE=Release",
         "-DBUILD_APPS=OFF",
-        "-DBUILD_DEC=OFF"
+        "-DBUILD_DEC=OFF",
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
       ],
       "sources": [
         {
