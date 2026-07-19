@@ -239,7 +239,20 @@ pub fn render_project(
     out: &str,
     profile: &str,
 ) -> Result<Vec<String>> {
+    render_project_with_progress(project_json, base_dir, out, profile, |_| {})
+}
+
+/// Render with a progress callback (0.0–1.0), invoked from the render
+/// thread roughly twice a second (#35).
+pub fn render_project_with_progress(
+    project_json: &str,
+    base_dir: &std::path::Path,
+    out: &str,
+    profile: &str,
+    progress: impl Fn(f64),
+) -> Result<Vec<String>> {
     let project = document::Project::from_json(project_json)?;
+    let total = project.duration().max(0.001);
     let compiled = mapping::compile(&project, base_dir)?;
     let pipeline = ges::Pipeline::new();
     pipeline.set_timeline(&compiled.timeline).context("attaching timeline")?;
@@ -249,7 +262,36 @@ pub fn render_project(
     let out_abs = std::path::absolute(out)?;
     pipeline.set_render_settings(&format!("file://{}", out_abs.display()), &encoding_profile(profile)?)?;
     pipeline.set_mode(ges::PipelineFlags::RENDER)?;
-    run_to_eos(&pipeline)?;
+
+    let bus = pipeline.bus().context("pipeline has no bus")?;
+    pipeline.set_state(gst::State::Playing).context("setting pipeline to Playing")?;
+    loop {
+        match bus.timed_pop(gst::ClockTime::from_mseconds(500)) {
+            Some(msg) => {
+                use gst::MessageView;
+                match msg.view() {
+                    MessageView::Eos(..) => break,
+                    MessageView::Error(err) => {
+                        let _ = pipeline.set_state(gst::State::Null);
+                        anyhow::bail!(
+                            "pipeline error from {:?}: {} ({:?})",
+                            err.src().map(|s| s.path_string()),
+                            err.error(),
+                            err.debug()
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            None => {
+                if let Some(pos) = pipeline.query_position::<gst::ClockTime>() {
+                    progress((pos.nseconds() as f64 / 1e9 / total).clamp(0.0, 1.0));
+                }
+            }
+        }
+    }
+    progress(1.0);
+    pipeline.set_state(gst::State::Null)?;
     Ok(compiled.warnings)
 }
 

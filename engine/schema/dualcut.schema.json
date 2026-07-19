@@ -313,6 +313,19 @@
           "items": {
             "$ref": "#/$defs/effect"
           }
+        },
+        "align": {
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "outline": {
+          "type": "string"
+        },
+        "shadow": {
+          "type": "boolean"
         }
       },
       "allOf": [

@@ -150,6 +150,15 @@ pub enum Element {
         font: String,
         #[serde(default = "default_color")]
         color: String,
+        /// Horizontal alignment; overrides transform.x positioning.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        align: Option<TextAlign>,
+        /// Outline color (#rrggbb / #aarrggbb).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outline: Option<String>,
+        /// Draw a drop shadow behind the text.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        shadow: bool,
     },
     Video {
         src: String,
@@ -251,6 +260,14 @@ pub struct Keyframe {
     pub value: f64,
     #[serde(default)]
     pub easing: Easing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -924,7 +941,7 @@ mod tests {
         let mut p = demo();
         p.overlays[0].clips.push(Clip {
             id: "late".into(), start: 6.0, duration: 1.0,
-            element: Element::Text { text: "x".into(), font: default_font(), color: default_color() },
+            element: Element::Text { text: "x".into(), font: default_font(), color: default_color(), align: None, outline: None, shadow: false },
             transform: Default::default(), animations: vec![], effects: vec![],
         });
         let first = p.overlays[0].clips[0].clone();
@@ -974,6 +991,7 @@ mod tests {
                 id: "in-t".into(), start: 0.0, duration: 0.0,
                 element: Element::Text {
                     text: "{msg}".into(), font: default_font(), color: default_color(),
+                    align: None, outline: None, shadow: false,
                 },
                 transform: Default::default(), animations: vec![], effects: vec![],
             }],

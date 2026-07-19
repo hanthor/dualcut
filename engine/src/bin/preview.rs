@@ -1423,8 +1423,9 @@ impl Editor {
         form.append(&row_dur);
         form.append(&row_op);
 
-        let text_entry: Option<gtk::Entry> = match &clip.element {
-            document::Element::Text { text, .. } => {
+        type TextWidgets = (gtk::Entry, gtk::DropDown, gtk::Entry, gtk::Switch);
+        let text_widgets: Option<TextWidgets> = match &clip.element {
+            document::Element::Text { text, align, outline, shadow, .. } => {
                 let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
                 let l = gtk::Label::new(Some("Text"));
                 l.set_width_chars(9);
@@ -1435,7 +1436,36 @@ impl Editor {
                 row.append(&l);
                 row.append(&entry);
                 form.append(&row);
-                Some(entry)
+
+                // Rich text styling (#38).
+                let style_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                let al = gtk::Label::new(Some("Align"));
+                al.set_width_chars(9);
+                al.set_halign(gtk::Align::Start);
+                style_row.append(&al);
+                let align_dd = gtk::DropDown::from_strings(&["(auto)", "left", "center", "right"]);
+                align_dd.set_selected(match align {
+                    None => 0,
+                    Some(document::TextAlign::Left) => 1,
+                    Some(document::TextAlign::Center) => 2,
+                    Some(document::TextAlign::Right) => 3,
+                });
+                style_row.append(&align_dd);
+                let outline_entry = gtk::Entry::new();
+                outline_entry.set_placeholder_text(Some("outline #rrggbb"));
+                outline_entry.set_max_width_chars(10);
+                if let Some(o) = outline {
+                    outline_entry.set_text(o);
+                }
+                style_row.append(&outline_entry);
+                let shadow_sw = gtk::Switch::new();
+                shadow_sw.set_active(*shadow);
+                shadow_sw.set_valign(gtk::Align::Center);
+                shadow_sw.set_tooltip_text(Some("Drop shadow"));
+                style_row.append(&gtk::Label::new(Some("Shadow")));
+                style_row.append(&shadow_sw);
+                form.append(&style_row);
+                Some((entry, align_dd, outline_entry, shadow_sw))
             }
             _ => None,
         };
@@ -1452,10 +1482,21 @@ impl Editor {
                     clip.start = spin_start.value();
                     clip.duration = spin_dur.value();
                     clip.transform.opacity = spin_op.value();
-                    if let (document::Element::Text { text, .. }, Some(entry)) =
-                        (&mut clip.element, text_entry.as_ref())
+                    if let (
+                        document::Element::Text { text, align, outline, shadow, .. },
+                        Some((entry, align_dd, outline_entry, shadow_sw)),
+                    ) = (&mut clip.element, text_widgets.as_ref())
                     {
                         *text = entry.text().to_string();
+                        *align = match align_dd.selected() {
+                            1 => Some(document::TextAlign::Left),
+                            2 => Some(document::TextAlign::Center),
+                            3 => Some(document::TextAlign::Right),
+                            _ => None,
+                        };
+                        let o = outline_entry.text().to_string();
+                        *outline = if o.trim().is_empty() { None } else { Some(o) };
+                        *shadow = shadow_sw.is_active();
                     }
                 }
                 this.commit_document(project);
@@ -2196,6 +2237,9 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
     status.set_selectable(true);
     status.set_wrap(true);
     status.add_css_class("monospace");
+    let bar = gtk::ProgressBar::new();
+    bar.set_show_text(true);
+    bar.set_visible(false);
     status.set_halign(gtk::Align::Start);
     status.set_wrap(true);
 
@@ -2207,33 +2251,49 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
         let profile = profile.clone();
         let start_render: Rc<dyn Fn(gtk::Button, String, String)> = {
             let status = status.clone();
+            let bar = bar.clone();
             let project_json = project_json.clone();
             let base_dir = base_dir.clone();
             Rc::new(move |btn: gtk::Button, out: String, prof: String| {
                 btn.set_sensitive(false);
                 status.set_text("Rendering…");
+                bar.set_visible(true);
+                bar.set_fraction(0.0);
                 let (tx, rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
+                let (ptx, prx) = std::sync::mpsc::channel::<f64>();
                 {
                     let project_json = project_json.clone();
                     let base_dir = base_dir.clone();
                     let out = out.clone();
                     std::thread::spawn(move || {
-                        let result =
-                            dualcut_engine::render_project(&project_json, &base_dir, &out, &prof)
-                                .map(|warnings| {
-                                    for w in warnings {
-                                        eprintln!("warning: {w}");
-                                    }
-                                })
-                                .map_err(|e| format!("{e:#}"));
+                        let result = dualcut_engine::render_project_with_progress(
+                            &project_json,
+                            &base_dir,
+                            &out,
+                            &prof,
+                            |p| {
+                                let _ = ptx.send(p);
+                            },
+                        )
+                        .map(|warnings| {
+                            for w in warnings {
+                                eprintln!("warning: {w}");
+                            }
+                        })
+                        .map_err(|e| format!("{e:#}"));
                         let _ = tx.send(result);
                     });
                 }
                 let status = status.clone();
+                let bar = bar.clone();
                 glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+                    while let Ok(p) = prx.try_recv() {
+                        bar.set_fraction(p);
+                    }
                     match rx.try_recv() {
                         Ok(Ok(())) => {
                             status.set_text(&format!("✓ exported {out}"));
+                            bar.set_fraction(1.0);
                             btn.set_sensitive(true);
                             glib::ControlFlow::Break
                         }
@@ -2290,6 +2350,7 @@ fn show_export_dialog(editor: &Rc<Editor>, parent: Option<&gtk::Window>) {
         });
     }
     content.append(&go);
+    content.append(&bar);
     content.append(&status);
     dialog.set_child(Some(&content));
     dialog.present();

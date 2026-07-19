@@ -145,7 +145,7 @@ fn add_clip(
     let duration = secs(if clip.duration > 0.0 { clip.duration } else { 1.0 });
 
     let ges_clip: Option<ges::Clip> = match &clip.element {
-        Element::Text { text, font, color } => {
+        Element::Text { text, font, color, align, outline, shadow } => {
             let title = ges::TitleClip::new().context("title clip")?;
             title.set_start(start);
             title.set_duration(duration);
@@ -154,8 +154,31 @@ fn add_clip(
             title.set_child_property("font-desc", font.to_value())?;
             title.set_child_property("color", parse_color(color).to_value())?;
             title.set_child_property("background", 0u32.to_value())?;
+            // Rich text styling (#38); warn rather than fail if this GES
+            // build lacks a property.
+            if let Some(outline) = outline
+                && let Err(e) =
+                    title.set_child_property("outline-color", parse_color(outline).to_value())
+            {
+                warnings.push(format!("clip {:?}: outline unsupported: {e}", clip.id));
+            }
+            if *shadow
+                && let Err(e) = title.set_child_property("shadow", true.to_value())
+            {
+                warnings.push(format!("clip {:?}: shadow unsupported: {e}", clip.id));
+            }
+            if let Some(align) = align {
+                let name = match align {
+                    crate::document::TextAlign::Left => "left",
+                    crate::document::TextAlign::Center => "center",
+                    crate::document::TextAlign::Right => "right",
+                };
+                title.set_child_property("halignment", name.to_value())?;
+            }
             if clip.transform.x != 0.0 || clip.transform.y != 0.0 {
-                title.set_child_property("halignment", "absolute".to_value())?;
+                if align.is_none() {
+                    title.set_child_property("halignment", "absolute".to_value())?;
+                }
                 title.set_child_property("valignment", "absolute".to_value())?;
                 title.set_child_property(
                     "xpos",
@@ -518,10 +541,13 @@ fn substitute(clip: &Clip, args: &BTreeMap<String, String>) -> Clip {
         }
     };
     match &mut clip.element {
-        Element::Text { text, font, color } => {
+        Element::Text { text, font, color, outline, .. } => {
             apply(text);
             apply(font);
             apply(color);
+            if let Some(o) = outline {
+                apply(o);
+            }
         }
         Element::Video { src, .. } | Element::Audio { src, .. } | Element::Image { src } => {
             apply(src)
