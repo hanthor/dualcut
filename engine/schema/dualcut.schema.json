@@ -400,7 +400,11 @@
         "type": {
           "enum": [
             "blur",
-            "color"
+            "color",
+            "chromakey",
+            "crop",
+            "eq",
+            "compressor"
           ]
         },
         "amount": {
@@ -427,6 +431,60 @@
           "type": "number",
           "minimum": -1,
           "maximum": 1
+        },
+        "color": {
+          "type": "string"
+        },
+        "angle": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 90
+        },
+        "noise": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "left": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "right": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "top": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bottom": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "low": {
+          "type": "number",
+          "minimum": -24,
+          "maximum": 12
+        },
+        "mid": {
+          "type": "number",
+          "minimum": -24,
+          "maximum": 12
+        },
+        "high": {
+          "type": "number",
+          "minimum": -24,
+          "maximum": 12
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ratio": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 4
         }
       }
     }

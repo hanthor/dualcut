@@ -1725,6 +1725,104 @@ impl Editor {
                         }));
                     });
                 }
+                document::Effect::ChromaKey { color, angle, noise } => {
+                    let l = gtk::Label::new(Some("Key"));
+                    l.add_css_class("dim-label");
+                    row.append(&l);
+                    let ce = gtk::Entry::new();
+                    ce.set_text(color);
+                    ce.set_max_width_chars(9);
+                    row.append(&ce);
+                    {
+                        let commit_fx = commit_fx.clone();
+                        ce.connect_activate(move |e| {
+                            let v = e.text().to_string();
+                            commit_fx(Box::new(move |fx| {
+                                if let document::Effect::ChromaKey { color, .. } = fx {
+                                    *color = v.clone();
+                                }
+                            }));
+                        });
+                    }
+                    for (name, val, min, max) in
+                        [("Angle", *angle, 1.0, 90.0), ("Noise", *noise, 0.0, 64.0)]
+                    {
+                        let (l, s) = fx_spin(name, val, min, max, 1.0);
+                        row.append(&l);
+                        row.append(&s);
+                        let commit_fx = commit_fx.clone();
+                        s.connect_value_changed(move |s| {
+                            let v = s.value();
+                            commit_fx(Box::new(move |fx| {
+                                if let document::Effect::ChromaKey { angle, noise, .. } = fx {
+                                    if name == "Angle" { *angle = v } else { *noise = v }
+                                }
+                            }));
+                        });
+                    }
+                }
+                document::Effect::Crop { left, right, top, bottom } => {
+                    for (name, val) in
+                        [("L", *left), ("R", *right), ("T", *top), ("B", *bottom)]
+                    {
+                        let (l, s) = fx_spin(name, val as f64, 0.0, 4000.0, 2.0);
+                        row.append(&l);
+                        row.append(&s);
+                        let commit_fx = commit_fx.clone();
+                        s.connect_value_changed(move |s| {
+                            let v = s.value() as i32;
+                            commit_fx(Box::new(move |fx| {
+                                if let document::Effect::Crop { left, right, top, bottom } = fx {
+                                    match name {
+                                        "L" => *left = v,
+                                        "R" => *right = v,
+                                        "T" => *top = v,
+                                        _ => *bottom = v,
+                                    }
+                                }
+                            }));
+                        });
+                    }
+                }
+                document::Effect::Eq { low, mid, high } => {
+                    for (name, val) in [("Low", *low), ("Mid", *mid), ("High", *high)] {
+                        let (l, s) = fx_spin(name, val, -24.0, 12.0, 0.5);
+                        row.append(&l);
+                        row.append(&s);
+                        let commit_fx = commit_fx.clone();
+                        s.connect_value_changed(move |s| {
+                            let v = s.value();
+                            commit_fx(Box::new(move |fx| {
+                                if let document::Effect::Eq { low, mid, high } = fx {
+                                    match name {
+                                        "Low" => *low = v,
+                                        "Mid" => *mid = v,
+                                        _ => *high = v,
+                                    }
+                                }
+                            }));
+                        });
+                    }
+                }
+                document::Effect::Compressor { threshold, ratio } => {
+                    for (name, val, min, max, step) in [
+                        ("Thresh", *threshold, 0.0, 1.0, 0.05),
+                        ("Ratio", *ratio, 1.0, 4.0, 0.1),
+                    ] {
+                        let (l, s) = fx_spin(name, val, min, max, step);
+                        row.append(&l);
+                        row.append(&s);
+                        let commit_fx = commit_fx.clone();
+                        s.connect_value_changed(move |s| {
+                            let v = s.value();
+                            commit_fx(Box::new(move |fx| {
+                                if let document::Effect::Compressor { threshold, ratio } = fx {
+                                    if name == "Thresh" { *threshold = v } else { *ratio = v }
+                                }
+                            }));
+                        });
+                    }
+                }
                 document::Effect::Color { brightness, contrast, saturation, hue } => {
                     for (name, val, min, max) in [
                         ("Bri", *brightness, -1.0, 1.0),
@@ -1780,6 +1878,12 @@ impl Editor {
             ("+ Color", document::Effect::Color {
                 brightness: 0.0, contrast: 1.0, saturation: 1.0, hue: 0.0,
             }),
+            ("+ Chroma key", document::Effect::ChromaKey {
+                color: "#00ff00".into(), angle: 20.0, noise: 2.0,
+            }),
+            ("+ Crop", document::Effect::Crop { left: 0, right: 0, top: 0, bottom: 0 }),
+            ("+ EQ", document::Effect::Eq { low: 0.0, mid: 0.0, high: 0.0 }),
+            ("+ Compressor", document::Effect::Compressor { threshold: 0.25, ratio: 2.0 }),
         ] {
             let b = gtk::Button::with_label(label);
             let this = self.clone();

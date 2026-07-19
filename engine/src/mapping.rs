@@ -456,6 +456,22 @@ fn apply_effects(ges_clip: &ges::Clip, clip: &Clip, warnings: &mut Vec<String>) 
     for effect in &clip.effects {
         let desc = match effect {
             crate::document::Effect::Blur { amount } => format!("gaussianblur sigma={amount}"),
+            crate::document::Effect::ChromaKey { color, angle, noise } => {
+                let argb = crate::document::parse_color(color);
+                let (r, g, b) = ((argb >> 16) & 0xff, (argb >> 8) & 0xff, argb & 0xff);
+                format!(
+                    "alpha method=custom target-r={r} target-g={g} target-b={b} angle={angle} noise-level={noise}"
+                )
+            }
+            crate::document::Effect::Crop { left, right, top, bottom } => {
+                format!("videocrop left={left} right={right} top={top} bottom={bottom}")
+            }
+            crate::document::Effect::Eq { low, mid, high } => {
+                format!("equalizer-3bands band0={low} band1={mid} band2={high}")
+            }
+            crate::document::Effect::Compressor { threshold, ratio } => {
+                format!("audiodynamic mode=compressor threshold={threshold} ratio={ratio}")
+            }
             crate::document::Effect::Color { brightness, contrast, saturation, hue } => format!(
                 "videobalance brightness={brightness} contrast={contrast} saturation={saturation} hue={hue}"
             ),

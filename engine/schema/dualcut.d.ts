@@ -155,6 +155,24 @@ export interface Anim {
 export type Effect =
   | { type: "blur"; /** Blur sigma, 0-50 (~3 is subtle). */ amount: number }
   | {
+      type: "chromakey";
+      /** Key color (default #00ff00). Pixels near it turn transparent. */
+      color?: string;
+      /** Hue tolerance in degrees, 1-90 (default 20). */
+      angle?: number;
+      /** Noise suppression, 0-64. */
+      noise?: number;
+    }
+  | { type: "crop"; left?: number; right?: number; top?: number; bottom?: number }
+  | { type: "eq"; /** dB, -24..12 per band */ low?: number; mid?: number; high?: number }
+  | {
+      type: "compressor";
+      /** Level where compression starts, 0-1 (default 0.25). */
+      threshold?: number;
+      /** Ratio 1-4 (default 2). */
+      ratio?: number;
+    }
+  | {
       type: "color";
       /** -1..1, neutral 0 */ brightness?: number;
       /** 0..2, neutral 1 */ contrast?: number;

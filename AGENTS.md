@@ -40,8 +40,11 @@ narrative spine) + **overlays** (tracks crossing scene cuts) + **defs**
 ```
 
 Clip: `{ id, start, duration, type, …element fields, transform?, animations?, effects? }`
-- effects: `[{type: "blur", amount}]` (sigma 0-50) and
-  `[{type: "color", brightness?, contrast?, saturation?, hue?}]`
+- effects: `{type: "blur", amount}` (sigma 0-50); `{type: "color",
+  brightness?, contrast?, saturation?, hue?}`; `{type: "chromakey",
+  color?, angle?, noise?}` (green screen); `{type: "crop", left?,
+  right?, top?, bottom?}`; audio: `{type: "eq", low?, mid?, high?}`
+  (dB) and `{type: "compressor", threshold?, ratio?}`
 - scene transition kinds: crossfade | wipe-lr | wipe-tb | box-wipe | iris | clock
 - defs may nest (compref inside a def); cycles are rejected at validation
 - `type`: `text` (text/font/color) · `video`/`audio` (src/offset/volume) ·

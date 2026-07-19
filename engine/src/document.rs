@@ -124,6 +124,46 @@ pub struct Clip {
 pub enum Effect {
     /// Gaussian blur; `amount` is the blur sigma (0-50, ~3 is subtle).
     Blur { amount: f64 },
+    /// Green-screen keying (#33): pixels near `color` turn transparent.
+    ChromaKey {
+        #[serde(default = "default_key_color")]
+        color: String,
+        /// Hue tolerance in degrees (1-90).
+        #[serde(default = "default_key_angle")]
+        angle: f64,
+        /// Noise suppression level (0-64).
+        #[serde(default)]
+        noise: f64,
+    },
+    /// Crop pixels from the clip's edges (#33).
+    Crop {
+        #[serde(default)]
+        left: i32,
+        #[serde(default)]
+        right: i32,
+        #[serde(default)]
+        top: i32,
+        #[serde(default)]
+        bottom: i32,
+    },
+    /// Three-band EQ in dB (-24..12) (#36).
+    Eq {
+        #[serde(default)]
+        low: f64,
+        #[serde(default)]
+        mid: f64,
+        #[serde(default)]
+        high: f64,
+    },
+    /// Dynamic range compressor (#36).
+    Compressor {
+        /// Level above which compression starts (0-1).
+        #[serde(default = "default_comp_threshold")]
+        threshold: f64,
+        /// Compression ratio (1-4 for audiodynamic).
+        #[serde(default = "default_comp_ratio")]
+        ratio: f64,
+    },
     /// Color balance. Neutral is brightness 0, contrast 1, saturation 1, hue 0.
     Color {
         #[serde(default)]
@@ -139,6 +179,18 @@ pub enum Effect {
 
 fn default_one() -> f64 {
     1.0
+}
+fn default_key_color() -> String {
+    "#00ff00".into()
+}
+fn default_key_angle() -> f64 {
+    20.0
+}
+fn default_comp_threshold() -> f64 {
+    0.25
+}
+fn default_comp_ratio() -> f64 {
+    2.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -408,6 +460,26 @@ impl Clip {
                 Effect::Blur { amount } => {
                     if !(0.0..=50.0).contains(amount) {
                         bail!("clip {:?}: blur amount must be 0-50", self.id);
+                    }
+                }
+                Effect::ChromaKey { angle, noise, .. } => {
+                    if !(1.0..=90.0).contains(angle) || !(0.0..=64.0).contains(noise) {
+                        bail!("clip {:?}: chromakey angle 1-90, noise 0-64", self.id);
+                    }
+                }
+                Effect::Crop { left, right, top, bottom } => {
+                    if [left, right, top, bottom].iter().any(|v| **v < 0) {
+                        bail!("clip {:?}: crop values must be >= 0", self.id);
+                    }
+                }
+                Effect::Eq { low, mid, high } => {
+                    if [low, mid, high].iter().any(|v| !(-24.0..=12.0).contains(*v)) {
+                        bail!("clip {:?}: eq bands are -24..12 dB", self.id);
+                    }
+                }
+                Effect::Compressor { threshold, ratio } => {
+                    if !(0.0..=1.0).contains(threshold) || !(1.0..=4.0).contains(ratio) {
+                        bail!("clip {:?}: compressor threshold 0-1, ratio 1-4", self.id);
                     }
                 }
                 Effect::Color { brightness, contrast, saturation, hue } => {
