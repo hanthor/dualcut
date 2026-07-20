@@ -667,6 +667,10 @@ impl Editor {
     ) -> gtk::Box {
         let col = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         col.set_size_request(LANE_COL_PX, -1);
+        // Fixed-width column, not a growable one (#56): an empty lane row
+        // (nothing yet in its adjoining Fixed) let this soak up the row's
+        // leftover space without an explicit hexpand(false).
+        col.set_hexpand(false);
         col.set_margin_start(4);
         let icon_w = gtk::Image::from_icon_name(icon);
         icon_w.set_pixel_size(14);
@@ -912,7 +916,15 @@ impl Editor {
         let Some(project) = project else { return };
         let cache = self.base_dir().join(".dualcut-cache");
 
-        let button = gtk::Button::with_label(&clip.id);
+        // Left-aligned label, not GtkButton's centered default (#56):
+        // with_label()'s auto-created Label isn't exposed to re-align, so
+        // build the child directly.
+        let button = gtk::Button::new();
+        let clip_label = gtk::Label::new(Some(&clip.id));
+        clip_label.set_halign(gtk::Align::Start);
+        clip_label.set_margin_start(4);
+        clip_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        button.set_child(Some(&clip_label));
         button.add_css_class("flat");
         button.add_css_class(match &clip.element {
             document::Element::Text { .. } => "clip-text",
