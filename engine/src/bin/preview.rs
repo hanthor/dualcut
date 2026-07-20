@@ -218,6 +218,10 @@ struct Editor {
     exporting: Cell<bool>,
     /// Exports waiting behind the active render: (output path, profile).
     export_queue: RefCell<VecDeque<(String, String)>>,
+    /// Scene/track ids collapsed in the Clips tab's tree (#39); persisted
+    /// across rebuild_inspector() calls since the widgets are torn down
+    /// and rebuilt on every edit.
+    clips_collapsed: RefCell<std::collections::HashSet<String>>,
 }
 
 impl Editor {
@@ -1534,41 +1538,92 @@ impl Editor {
             return;
         };
 
-        // Clip list.
+        // Clip list: a two-level tree (scene/track -> clips), collapsible
+        // per group (#39). GtkListBox doesn't nest, so the tree is flattened
+        // into rows with a non-selectable header row per group followed by
+        // its (optionally hidden) clip rows -- simpler than wiring up
+        // GtkTreeListModel for a hierarchy this shallow, same collapse UX.
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         list.set_selection_mode(gtk::SelectionMode::Multiple);
-        let mut entries: Vec<(String, String)> = Vec::new();
+        // Row index -> clip id; None for group header rows.
+        let mut ids: Vec<Option<String>> = Vec::new();
+        let mut groups: Vec<(String, String, Vec<(String, String)>)> = Vec::new();
         for scene in &project.scenes {
-            for clip in &scene.layers {
-                entries.push((format!("{} ▸ {}", scene.id, clip.id), clip.id.clone()));
-            }
+            let clips: Vec<(String, String)> =
+                scene.layers.iter().map(|c| (c.id.clone(), c.id.clone())).collect();
+            groups.push((scene.id.clone(), scene.id.clone(), clips));
         }
         for track in &project.overlays {
-            for clip in &track.clips {
-                entries.push((format!("〜 {} ▸ {}", track.id, clip.id), clip.id.clone()));
-            }
+            let clips: Vec<(String, String)> =
+                track.clips.iter().map(|c| (c.id.clone(), c.id.clone())).collect();
+            groups.push((format!("〜 {}", track.id), track.id.clone(), clips));
         }
-        for (label, id) in &entries {
-            let row = gtk::ListBoxRow::new();
-            let l = gtk::Label::new(Some(label));
+        for (label, group_id, clips) in &groups {
+            let has_selection = clips.iter().any(|(_, id)| Some(id) == selected.as_ref());
+            if has_selection {
+                self.clips_collapsed.borrow_mut().remove(group_id);
+            }
+            let collapsed = self.clips_collapsed.borrow().contains(group_id);
+
+            let head_row = gtk::ListBoxRow::new();
+            head_row.set_selectable(false);
+            head_row.set_activatable(true);
+            let head = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            head.set_margin_top(4);
+            head.set_margin_bottom(4);
+            head.set_margin_start(4);
+            let icon = gtk::Image::from_icon_name(if collapsed {
+                "pan-end-symbolic"
+            } else {
+                "pan-down-symbolic"
+            });
+            head.append(&icon);
+            let l = gtk::Label::new(Some(&format!("{label} ({})", clips.len())));
             l.set_halign(gtk::Align::Start);
-            l.set_margin_top(4);
-            l.set_margin_bottom(4);
-            l.set_margin_start(8);
-            row.set_child(Some(&l));
-            list.append(&row);
-            if Some(id) == selected.as_ref() {
-                list.select_row(Some(&row));
+            l.add_css_class("heading");
+            head.append(&l);
+            head_row.set_child(Some(&head));
+            list.append(&head_row);
+            ids.push(None);
+            {
+                let this = self.clone();
+                let group_id = group_id.clone();
+                head_row.connect_activate(move |_| {
+                    let mut c = this.clips_collapsed.borrow_mut();
+                    if !c.insert(group_id.clone()) {
+                        c.remove(&group_id);
+                    }
+                    drop(c);
+                    this.rebuild_inspector();
+                });
+            }
+
+            if collapsed {
+                continue;
+            }
+            for (label, id) in clips {
+                let row = gtk::ListBoxRow::new();
+                let l = gtk::Label::new(Some(label));
+                l.set_halign(gtk::Align::Start);
+                l.set_margin_top(4);
+                l.set_margin_bottom(4);
+                l.set_margin_start(24);
+                row.set_child(Some(&l));
+                list.append(&row);
+                ids.push(Some(id.clone()));
+                if Some(id) == selected.as_ref() {
+                    list.select_row(Some(&row));
+                }
             }
         }
         {
             let this = self.clone();
-            let ids: Vec<String> = entries.iter().map(|(_, id)| id.clone()).collect();
+            let ids = ids.clone();
             list.connect_selected_rows_changed(move |list| {
                 let rows = list.selected_rows();
                 let Some(last) = rows.last() else { return };
-                let id = ids[last.index() as usize].clone();
+                let Some(id) = ids.get(last.index() as usize).cloned().flatten() else { return };
                 let changed = {
                     let mut st = this.state.borrow_mut();
                     let changed = st.selected.as_ref() != Some(&id) && rows.len() == 1;
@@ -1597,7 +1652,7 @@ impl Editor {
         {
             let this = self.clone();
             let list = list.clone();
-            let ids: Vec<String> = entries.iter().map(|(_, id)| id.clone()).collect();
+            let ids = ids.clone();
             let project_snapshot = project.clone();
             del_sel.connect_clicked(move |_| {
                 let rows = list.selected_rows();
@@ -1607,7 +1662,11 @@ impl Editor {
                 let mut project = project_snapshot.clone();
                 let count = rows.len();
                 for row in rows {
-                    remove_clip(&mut project, &ids[row.index() as usize]);
+                    // Header rows are non-selectable, so selected rows
+                    // always carry an id.
+                    if let Some(id) = ids.get(row.index() as usize).and_then(|o| o.as_ref()) {
+                        remove_clip(&mut project, id);
+                    }
                 }
                 this.state.borrow_mut().selected = None;
                 this.commit_document(project);
@@ -1626,14 +1685,14 @@ impl Editor {
         {
             let this = self.clone();
             let list = list.clone();
-            let ids: Vec<String> = entries.iter().map(|(_, id)| id.clone()).collect();
+            let ids = ids.clone();
             let project_snapshot = project.clone();
             let tpl_name = tpl_name.clone();
             save_tpl.connect_clicked(move |_| {
                 let selected: Vec<String> = list
                     .selected_rows()
                     .iter()
-                    .map(|r| ids[r.index() as usize].clone())
+                    .filter_map(|r| ids.get(r.index() as usize).cloned().flatten())
                     .collect();
                 let name = tpl_name.text().to_string();
                 let mut project = project_snapshot.clone();
@@ -3105,6 +3164,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         ui: RefCell::new(None),
         exporting: Cell::new(false),
         export_queue: RefCell::new(VecDeque::new()),
+        clips_collapsed: RefCell::new(std::collections::HashSet::new()),
     });
 
     let picture = gtk::Picture::builder()
@@ -3609,8 +3669,8 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     clips_box.set_margin_start(6);
     clips_box.set_margin_end(6);
     let left_stack = adw::ViewStack::new();
-    left_stack.add_titled(&clips_box, Some("clips"), "Clips");
     left_stack.add_titled(&media_scroll, Some("library"), "Library");
+    left_stack.add_titled(&clips_box, Some("clips"), "Clips");
     left_stack.add_titled(&templates_scroll, Some("templates"), "Templates");
     left_stack.add_titled(&code_page, Some("code"), "Code");
     #[cfg(feature = "scripting")]
