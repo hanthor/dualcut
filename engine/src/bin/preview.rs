@@ -280,6 +280,10 @@ struct Ui {
     picture: gtk::Picture,
     seek: gtk::Scale,
     strip: gtk::Box,
+    /// Lane label column (#56): a separate, non-scrolling stack beside
+    /// `strip`'s horizontally-scrolling content, so "Layer n" / track
+    /// names stay visible while the clips scroll past them.
+    label_col: gtk::Box,
     inspector: gtk::Box,
     media_grid: gtk::FlowBox,
     media_empty: gtk::Box,
@@ -705,6 +709,9 @@ impl Editor {
         while let Some(child) = ui.strip.first_child() {
             ui.strip.remove(&child);
         }
+        while let Some(child) = ui.label_col.first_child() {
+            ui.label_col.remove(&child);
+        }
         let (project, pps) = {
             let st = self.state.borrow();
             (st.project.clone(), st.pps)
@@ -771,15 +778,13 @@ impl Editor {
             });
             ruler.add_controller(click);
         }
-        // Spacer matching the lane label column exactly, so the ruler's
-        // time axis (and its playhead line) lines up with the clip
-        // lanes below instead of two different x-origins (#21).
-        let ruler_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        // Spacer matching the ruler's own height, in the label column
+        // (now a separate non-scrolling stack, #56), so lane rows still
+        // line up under their labels one-for-one.
+        ui.strip.append(&ruler);
         let ruler_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        ruler_spacer.set_size_request(LANE_COL_PX, -1);
-        ruler_row.append(&ruler_spacer);
-        ruler_row.append(&ruler);
-        ui.strip.append(&ruler_row);
+        ruler_spacer.set_size_request(LANE_COL_PX, 26);
+        ui.label_col.append(&ruler_spacer);
         *ui.ruler.borrow_mut() = Some(ruler.clone());
 
         // Scene-layer lanes: one row per layer slot, clips positioned at
@@ -790,7 +795,6 @@ impl Editor {
         let max_layers =
             project.scenes.iter().map(|s| s.layers.len()).max().unwrap_or(0).max(1);
         for li in 0..max_layers {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             let meta = project.scene_lanes.get(li).cloned().unwrap_or_default();
             let on_toggle: Rc<dyn Fn(LaneToggle, bool)> = {
                 let this = self.clone();
@@ -817,7 +821,7 @@ impl Editor {
                 meta.muted,
                 on_toggle,
             );
-            row.append(&col);
+            ui.label_col.append(&col);
             let lane = gtk::Fixed::new();
             lane.set_size_request((project.duration() * pps) as i32 + 40, 30);
             for (si, scene) in project.scenes.iter().enumerate() {
@@ -843,12 +847,10 @@ impl Editor {
                     meta.locked,
                 );
             }
-            row.append(&lane);
-            ui.strip.append(&row);
+            ui.strip.append(&lane);
         }
 
         for (ti, track) in project.overlays.iter().enumerate() {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             let name = if track.name.is_empty() { &track.id } else { &track.name };
             let on_toggle: Rc<dyn Fn(LaneToggle, bool)> = {
                 let this = self.clone();
@@ -874,7 +876,7 @@ impl Editor {
                 track.muted,
                 on_toggle,
             );
-            row.append(&col);
+            ui.label_col.append(&col);
             let lane = gtk::Fixed::new();
             lane.set_size_request((project.duration() * pps) as i32 + 40, 30);
             for clip in &track.clips {
@@ -889,8 +891,7 @@ impl Editor {
                     track.locked,
                 );
             }
-            row.append(&lane);
-            ui.strip.append(&row);
+            ui.strip.append(&lane);
         }
     }
 
@@ -3901,13 +3902,24 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     transport.append(&time_label);
 
     // Bottom pane: the multitrack timeline, toggleable (GNOME Builder style).
+    // Lane labels live in their own non-scrolling column beside the
+    // clips (#56) rather than inline in the same horizontally-scrolling
+    // strip, so "Layer n" / track names stay visible while scrolling.
+    let label_col = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let strip = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    strip.set_margin_start(12);
     strip.set_margin_end(12);
-    strip.set_margin_bottom(8);
+    let content_scroll = gtk::ScrolledWindow::new();
+    content_scroll.set_child(Some(&strip));
+    content_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    content_scroll.set_hexpand(true);
+    let strip_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    strip_hbox.set_margin_start(12);
+    strip_hbox.set_margin_bottom(8);
+    strip_hbox.append(&label_col);
+    strip_hbox.append(&content_scroll);
     let strip_scroll = gtk::ScrolledWindow::new();
-    strip_scroll.set_child(Some(&strip));
-    strip_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+    strip_scroll.set_child(Some(&strip_hbox));
+    strip_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     strip_scroll.set_min_content_height(150);
     // Bottom pane: zoom toolbar + timeline, resizable; the toggle hides it.
     let bottom_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -4590,6 +4602,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
             picture,
             seek,
             strip,
+            label_col,
             inspector,
             media_grid,
             media_empty,
