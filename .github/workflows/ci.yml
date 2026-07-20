@@ -19,9 +19,17 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Schema/types in sync with the bundled agent skill (#49)
+        # No diffutils in the bare container image yet (toolchain install
+        # is the next step) -- compare via a shell builtin instead.
         run: |
-          diff -q engine/schema/dualcut.d.ts skills/dualcut/references/dualcut.d.ts
-          diff -q engine/schema/dualcut.schema.json skills/dualcut/references/dualcut.schema.json
+          [ "$(cat engine/schema/dualcut.d.ts)" = "$(cat skills/dualcut/references/dualcut.d.ts)" ] || {
+            echo "engine/schema/dualcut.d.ts and skills/dualcut/references/dualcut.d.ts have drifted"
+            exit 1
+          }
+          [ "$(cat engine/schema/dualcut.schema.json)" = "$(cat skills/dualcut/references/dualcut.schema.json)" ] || {
+            echo "engine/schema/dualcut.schema.json and skills/dualcut/references/dualcut.schema.json have drifted"
+            exit 1
+          }
 
       - name: Install toolchain + runtime
         run: |
