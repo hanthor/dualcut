@@ -60,6 +60,26 @@ fn main() -> glib::ExitCode {
     app.run_with_args::<&str>(&[])
 }
 
+/// Who made an edit-history entry (surfaced in the History panel so it's
+/// clear which changes came from the GUI vs. an agent driving the HTTP API
+/// vs. someone editing the project file directly).
+#[derive(Clone, Copy, PartialEq)]
+enum EditSource {
+    Gui,
+    Agent,
+    ExternalFile,
+}
+
+#[derive(Clone)]
+struct HistoryEntry {
+    /// Document JSON *before* this edit -- what undo, or jumping to this
+    /// entry in the History panel, restores.
+    snapshot: String,
+    source: EditSource,
+    summary: String,
+    at: SystemTime,
+}
+
 struct AppState {
     pipeline: ges::Pipeline,
     project: Option<Project>,
@@ -69,7 +89,7 @@ struct AppState {
     selected: Option<String>,
     /// Timeline zoom, pixels per second.
     pps: f64,
-    undo: Vec<String>,
+    history: Vec<HistoryEntry>,
     redo: Vec<String>,
     /// Set while the app itself writes the file, to skip one reload cycle.
     self_write: bool,
@@ -173,6 +193,65 @@ fn with_proxies(project: &Project, base_dir: &std::path::Path) -> Project {
     swapped
 }
 
+/// Coarse, cheap description of what changed between two document states,
+/// for the Edit History panel. Not a real diff (no per-field tracking of
+/// which clip/effect changed) -- counts clips/scenes/tracks/defs and falls
+/// back to a generic label, which is honest about its own resolution
+/// without threading a label through every one of commit_document's many
+/// call sites.
+fn diff_summary(prev: &Project, new: &Project) -> String {
+    let clip_count = |p: &Project| -> usize {
+        p.scenes.iter().map(|s| s.layers.len()).sum::<usize>()
+            + p.overlays.iter().map(|t| t.clips.len()).sum::<usize>()
+    };
+    let (pc, nc) = (clip_count(prev), clip_count(new));
+    if nc > pc {
+        return format!("Added {} clip{}", nc - pc, if nc - pc == 1 { "" } else { "s" });
+    }
+    if nc < pc {
+        return format!("Removed {} clip{}", pc - nc, if pc - nc == 1 { "" } else { "s" });
+    }
+    if new.scenes.len() != prev.scenes.len() {
+        return if new.scenes.len() > prev.scenes.len() { "Added scene" } else { "Removed scene" }
+            .into();
+    }
+    if new.overlays.len() != prev.overlays.len() {
+        return if new.overlays.len() > prev.overlays.len() {
+            "Added overlay track"
+        } else {
+            "Removed overlay track"
+        }
+        .into();
+    }
+    if new.defs.len() != prev.defs.len() {
+        return "Edited templates".into();
+    }
+    if (prev.duration() - new.duration()).abs() > 0.001 {
+        return "Changed timing".into();
+    }
+    "Edited project".into()
+}
+
+/// Consume the agent-edit marker (written by `api::serve_file_api` just
+/// before the file write that's about to trigger this reload) if it's
+/// fresh, tagging the resulting history entry as agent-sourced with the
+/// request's own summary. Stale/missing marker => a human edited the file
+/// directly, not through the HTTP API.
+fn take_agent_marker(project_path: &std::path::Path) -> Option<(EditSource, String)> {
+    let cache = project_path.parent()?.join(".dualcut-cache");
+    let marker = cache.join("agent-edit.json");
+    let raw = std::fs::read_to_string(&marker).ok()?;
+    let _ = std::fs::remove_file(&marker);
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let at_ms = v["at_unix_ms"].as_u64()?;
+    let now_ms =
+        SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+    if now_ms.saturating_sub(at_ms) > 5000 {
+        return None;
+    }
+    Some((EditSource::Agent, v["summary"].as_str().unwrap_or("Agent edit").to_string()))
+}
+
 fn compile_project(project: &Project, base_dir: &std::path::Path) -> Result<ges::Timeline> {
     // Preview pipelines render at reduced resolution (Preferences) and
     // read proxy media where available; exports go through render_project
@@ -205,6 +284,7 @@ struct Ui {
     media_grid: gtk::FlowBox,
     media_empty: gtk::Box,
     clips_box: gtk::Box,
+    history_box: gtk::Box,
     toasts: adw::ToastOverlay,
     ruler: std::cell::RefCell<Option<gtk::DrawingArea>>,
     templates_list: gtk::ListBox,
@@ -234,22 +314,53 @@ impl Editor {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    /// Persist the document, push an undo snapshot, rebuild everything.
+    /// Persist the document, push a history entry, rebuild everything.
+    /// Every GUI-originated edit goes through this (so it's tagged
+    /// `EditSource::Gui`); external file edits and agent HTTP requests are
+    /// tagged separately where they're detected (mtime-poll reload).
     fn commit_document(self: &Rc<Self>, project: Project) {
-        let (path, prev_json) = {
+        let (path, prev) = {
             let st = self.state.borrow();
-            let prev = st.project.as_ref().map(|p| p.to_json());
-            (st.project_path.clone(), prev)
+            (st.project_path.clone(), st.project.clone())
         };
-        if let Some(prev) = prev_json {
+        if let Some(prev) = prev {
+            let summary = diff_summary(&prev, &project);
             let mut st = self.state.borrow_mut();
-            st.undo.push(prev);
+            st.history.push(HistoryEntry {
+                snapshot: prev.to_json(),
+                source: EditSource::Gui,
+                summary,
+                at: SystemTime::now(),
+            });
             st.redo.clear();
         }
         match path {
             Some(path) => self.write_and_rebuild(&path, project),
             // Unsaved project: keep everything in memory until Save As.
             None => self.rebuild_in_memory(project),
+        }
+    }
+
+    /// Jump directly to a past document state from the History panel
+    /// (index into `history`, oldest first) rather than stepping through
+    /// undo one edit at a time.
+    fn jump_to_history(self: &Rc<Self>, index: usize) {
+        let (path, snapshot) = {
+            let mut st = self.state.borrow_mut();
+            let Some(path) = st.project_path.clone() else { return };
+            if index >= st.history.len() {
+                return;
+            }
+            let entry = st.history[index].clone();
+            st.history.truncate(index);
+            let cur_json = st.project.as_ref().map(|p| p.to_json());
+            if let Some(cur_json) = cur_json {
+                st.redo.push(cur_json);
+            }
+            (path, entry.snapshot)
+        };
+        if let Ok(project) = Project::from_json(&snapshot) {
+            self.write_and_rebuild(&path, project);
         }
     }
 
@@ -287,6 +398,7 @@ impl Editor {
                 self.state.borrow_mut().project = Some(project);
                 self.rebuild_strip();
                 self.rebuild_inspector();
+                self.rebuild_history();
                 self.rebuild_media();
                 self.rebuild_templates();
                 self.refresh_code();
@@ -393,7 +505,7 @@ impl Editor {
                 {
                     let mut st = self.state.borrow_mut();
                     st.project_path = Some(path.to_path_buf());
-                    st.undo.clear();
+                    st.history.clear();
                     st.redo.clear();
                     st.selected = None;
                 }
@@ -459,12 +571,12 @@ impl Editor {
         let (path, snapshot) = {
             let mut st = self.state.borrow_mut();
             let Some(path) = st.project_path.clone() else { return };
-            let Some(snapshot) = st.undo.pop() else { return };
+            let Some(entry) = st.history.pop() else { return };
             if let Some(cur) = st.project.as_ref() {
                 let json = cur.to_json();
                 st.redo.push(json);
             }
-            (path, snapshot)
+            (path, entry.snapshot)
         };
         if let Ok(project) = Project::from_json(&snapshot) {
             self.write_and_rebuild(&path, project);
@@ -476,9 +588,14 @@ impl Editor {
             let mut st = self.state.borrow_mut();
             let Some(path) = st.project_path.clone() else { return };
             let Some(snapshot) = st.redo.pop() else { return };
-            if let Some(cur) = st.project.as_ref() {
-                let json = cur.to_json();
-                st.undo.push(json);
+            let cur_json = st.project.as_ref().map(|p| p.to_json());
+            if let Some(cur_json) = cur_json {
+                st.history.push(HistoryEntry {
+                    snapshot: cur_json,
+                    source: EditSource::Gui,
+                    summary: "Redo".into(),
+                    at: SystemTime::now(),
+                });
             }
             (path, snapshot)
         };
@@ -522,6 +639,7 @@ impl Editor {
                 }
                 self.rebuild_strip();
                 self.rebuild_inspector();
+                self.rebuild_history();
                 self.rebuild_media();
                 self.rebuild_templates();
                 self.refresh_code();
@@ -2325,6 +2443,71 @@ impl Editor {
         form.append(&actions);
         uiref.inspector.append(&form);
     }
+
+    /// Edit History panel (newest first): who made each change (GUI /
+    /// agent HTTP request / external file edit) and a coarse summary.
+    /// Clicking an entry jumps the document straight to that state.
+    fn rebuild_history(self: &Rc<Self>) {
+        let entries = self.state.borrow().history.clone();
+        let ui = self.ui.borrow();
+        let Some(uiref) = ui.as_ref() else { return };
+        while let Some(child) = uiref.history_box.first_child() {
+            uiref.history_box.remove(&child);
+        }
+        if entries.is_empty() {
+            let hint = gtk::Label::new(Some("No edits yet."));
+            hint.add_css_class("dim-label");
+            hint.set_margin_top(24);
+            uiref.history_box.append(&hint);
+            return;
+        }
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::None);
+        for (i, entry) in entries.iter().enumerate().rev() {
+            let row = gtk::ListBoxRow::new();
+            row.set_activatable(true);
+            let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            hbox.set_margin_top(6);
+            hbox.set_margin_bottom(6);
+            hbox.set_margin_start(8);
+            hbox.set_margin_end(8);
+            let (icon_name, tooltip) = match entry.source {
+                EditSource::Gui => ("avatar-default-symbolic", "Edited in the app"),
+                EditSource::Agent => ("network-server-symbolic", "Edited by an agent (HTTP API)"),
+                EditSource::ExternalFile => ("text-x-generic-symbolic", "Edited outside the app"),
+            };
+            let icon = gtk::Image::from_icon_name(icon_name);
+            icon.set_tooltip_text(Some(tooltip));
+            hbox.append(&icon);
+            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            let summary_l = gtk::Label::new(Some(&entry.summary));
+            summary_l.set_halign(gtk::Align::Start);
+            vbox.append(&summary_l);
+            let secs = entry.at.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let time_l = gtk::Label::new(Some(
+                &glib::DateTime::from_unix_local(secs as i64)
+                    .and_then(|d| d.format("%H:%M:%S"))
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+            ));
+            time_l.add_css_class("dim-label");
+            time_l.add_css_class("caption");
+            time_l.set_halign(gtk::Align::Start);
+            vbox.append(&time_l);
+            hbox.append(&vbox);
+            row.set_child(Some(&hbox));
+            list.append(&row);
+            {
+                let this = self.clone();
+                let idx = i;
+                let click = gtk::GestureClick::new();
+                click.connect_released(move |_, _, _, _| this.jump_to_history(idx));
+                row.add_controller(click);
+            }
+        }
+        uiref.history_box.append(&list);
+    }
 }
 
 fn clip_box(project: &Project, clip: &document::Clip) -> (f64, f64, f64, f64) {
@@ -3190,7 +3373,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
             duration,
             selected: None,
             pps: DEFAULT_PPS,
-            undo: Vec::new(),
+            history: Vec::new(),
             redo: Vec::new(),
             self_write: false,
         })),
@@ -3420,6 +3603,19 @@ fn build_ui(app: &adw::Application) -> Result<()> {
                     .and_then(|j| Project::from_json(&j))
                 {
                     Ok(project) => {
+                        let (source, summary) = take_agent_marker(&path)
+                            .unwrap_or((EditSource::ExternalFile, "Edited outside the app".into()));
+                        let prev = editor.state.borrow().project.clone();
+                        if let Some(prev) = prev {
+                            let mut st = editor.state.borrow_mut();
+                            st.history.push(HistoryEntry {
+                                snapshot: prev.to_json(),
+                                source,
+                                summary,
+                                at: SystemTime::now(),
+                            });
+                            st.redo.clear();
+                        }
                         editor.state.borrow_mut().project = Some(project);
                         editor.rebuild();
                         println!("project reloaded from disk");
@@ -3806,15 +4002,35 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     inspector.set_margin_end(8);
     inspector.set_size_request(300, -1);
 
-    // Right sidebar is parameters only; scripting lives with the other
-    // code views in the left notebook.
+    // Right sidebar: Inspect | History (scripting lives with the other
+    // code views in the left notebook). The existing sidebar-toggle button
+    // hides/shows this whole area, tabs included.
+    let history_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    history_box.set_margin_top(8);
+    history_box.set_margin_start(8);
+    history_box.set_margin_end(8);
+
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let inspector_scroll = gtk::ScrolledWindow::new();
     inspector_scroll.set_child(Some(&inspector));
     inspector_scroll.set_vexpand(true);
     inspector_scroll.set_min_content_width(280);
     inspector_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    sidebar.append(&inspector_scroll);
+    let history_scroll = gtk::ScrolledWindow::new();
+    history_scroll.set_child(Some(&history_box));
+    history_scroll.set_vexpand(true);
+    history_scroll.set_min_content_width(280);
+    history_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+
+    let right_stack = adw::ViewStack::new();
+    right_stack.add_titled(&inspector_scroll, Some("inspect"), "Inspect");
+    right_stack.add_titled(&history_scroll, Some("history"), "History");
+    let right_switcher = adw::InlineViewSwitcher::builder().stack(&right_stack).build();
+    right_switcher.set_margin_top(6);
+    right_switcher.set_margin_bottom(6);
+    sidebar.append(&right_switcher);
+    right_stack.set_vexpand(true);
+    sidebar.append(&right_stack);
 
     let inner = gtk::Paned::new(gtk::Orientation::Horizontal);
     inner.set_start_child(Some(&center));
@@ -3995,7 +4211,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
                 {
                     let mut st = editor.state.borrow_mut();
                     st.project_path = None;
-                    st.undo.clear();
+                    st.history.clear();
                     st.redo.clear();
                     st.selected = None;
                 }
@@ -4216,6 +4432,7 @@ fn build_ui(app: &adw::Application) -> Result<()> {
             media_grid,
             media_empty,
             clips_box,
+            history_box,
             toasts: toasts.clone(),
             ruler: std::cell::RefCell::new(None),
             templates_list,

@@ -5,13 +5,32 @@
 
 use crate::document::Project;
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tiny_http::{Header, Method, Response, Server};
 
 fn json_response(status: u16, body: String) -> Response<std::io::Cursor<Vec<u8>>> {
     Response::from_string(body)
         .with_status_code(status)
         .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
+}
+
+/// Leave a short-lived marker next to the project's cache dir so the GUI's
+/// mtime-poll reload can tell "an agent just wrote this via the HTTP API"
+/// apart from "a human edited the file directly" for the Edit History
+/// panel. Best-effort: a write that fails here still succeeded at its
+/// actual job (the project file itself), so errors are swallowed.
+fn touch_agent_marker(path: &Path, summary: &str) {
+    let Some(dir) = path.parent() else { return };
+    let cache = dir.join(".dualcut-cache");
+    if std::fs::create_dir_all(&cache).is_err() {
+        return;
+    }
+    let at_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let body = serde_json::json!({"summary": summary, "at_unix_ms": at_unix_ms}).to_string();
+    let _ = std::fs::write(cache.join("agent-edit.json"), body);
 }
 
 /// Serve the agent API for `path` on 127.0.0.1:`port`, blocking forever.
@@ -39,7 +58,10 @@ pub fn serve_file_api(path: PathBuf, port: u16) -> Result<()> {
             },
             (Method::Post, "/project") => match Project::from_json(&body) {
                 Ok(project) => match std::fs::write(&path, project.to_json()) {
-                    Ok(()) => json_response(200, r#"{"ok":true}"#.into()),
+                    Ok(()) => {
+                        touch_agent_marker(&path, "Replaced project (agent)");
+                        json_response(200, r#"{"ok":true}"#.into())
+                    }
                     Err(e) => json_response(500, format!(r#"{{"error":{:?}}}"#, e.to_string())),
                 },
                 Err(e) => json_response(400, format!(r#"{{"error":{:?}}}"#, e.to_string())),
@@ -49,7 +71,10 @@ pub fn serve_file_api(path: PathBuf, port: u16) -> Result<()> {
                 .and_then(|p| crate::scripting::run_script(&body, &p))
             {
                 Ok(edited) => match std::fs::write(&path, edited.to_json()) {
-                    Ok(()) => json_response(200, r#"{"ok":true}"#.into()),
+                    Ok(()) => {
+                        touch_agent_marker(&path, "Ran script (agent)");
+                        json_response(200, r#"{"ok":true}"#.into())
+                    }
                     Err(e) => json_response(500, format!(r#"{{"error":{:?}}}"#, e.to_string())),
                 },
                 Err(e) => json_response(400, format!(r#"{{"error":{:?}}}"#, e.to_string())),
@@ -87,6 +112,7 @@ pub fn serve_file_api(path: PathBuf, port: u16) -> Result<()> {
                 };
                 p.validate()?;
                 std::fs::write(&path, p.to_json())?;
+                touch_agent_marker(&path, &format!("{op} {id} (agent)"));
                 Ok(result)
             }) {
                 Ok(v) => json_response(200, v.to_string()),
