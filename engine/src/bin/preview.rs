@@ -4549,6 +4549,51 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         let mut steps: Vec<Step> = Vec::new();
         if untitled {
             steps.push(("new-project", Box::new(|| {})));
+            {
+                let editor = editor.clone();
+                steps.push(("shorts-mode", Box::new(move || {
+                    // Portrait canvas (#48). Captured in this pass (no
+                    // project file, so nothing in this document ever
+                    // references the demo video asset) rather than the
+                    // demo-project pass: spawn_thumbnail_worker() scans
+                    // every clip for thumbnails on the very first
+                    // rebuild_strip(), and the demo's own media-ball clip
+                    // can crash that background worker on hosts missing
+                    // its codec profile (#45) before any step in that
+                    // pass gets a reliable chance to capture.
+                    let mut project =
+                        dualcut_engine::templates::new_project_sized("Shorts Demo", 1080, 1920);
+                    project.scenes[0].duration = 6.0;
+                    project.scenes[0].layers.push(document::Clip {
+                        id: "hook".into(),
+                        start: 0.0,
+                        duration: 0.0,
+                        element: document::Element::Text {
+                            text: "Wait for it…".into(),
+                            font: "Sans Bold 44".into(),
+                            color: "#ffffff".into(),
+                            align: Some(document::TextAlign::Center),
+                            outline: Some("#000000".into()),
+                            shadow: false,
+                        },
+                        transform: Default::default(),
+                        animations: vec![],
+                        effects: vec![],
+                    });
+                    {
+                        let mut st = editor.state.borrow_mut();
+                        st.project_path = None;
+                        st.history.clear();
+                        st.redo.clear();
+                        st.selected = None;
+                    }
+                    if let Some(win) = editor.window() {
+                        win.set_title(Some("Dualcut — Shorts Demo (unsaved)"));
+                    }
+                    editor.rebuild_in_memory(project);
+                    editor.zoom_to_fit();
+                })));
+            }
         } else {
             steps.push(("editor-overview", Box::new(|| {})));
             {

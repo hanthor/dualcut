@@ -87,9 +87,23 @@ automatically.
 
 ![Scene form](guide/scene-form.png)
 
+## Vertical / Shorts export
+
+*New Vertical Project (9:16)* in the hamburger menu scaffolds a
+1080×1920 portrait canvas for short-form/social export instead of the
+usual 1920×1080. Pairs with two starter templates in the Templates
+tab: **vertical-center-crop** (scales and centers a single 16:9 source
+to fill the portrait frame) and **vertical-top-bottom-split** (stacks
+two sources in the top/bottom halves — reaction + gameplay style).
+Both are plain composition — transform math on ordinary video clips —
+so they work with any project, not just ones started this way.
+
+![Shorts mode](guide/shorts-mode.png)
+
 ## Menu
 
-The hamburger menu holds *New Project*, *Save Project As…*, *Generate
+The hamburger menu holds *New Project*, *New Vertical Project (9:16)*,
+*Save Project As…*, *Generate
 Captions…* (transcribes the project audio locally with whisper.cpp and
 lands the segments as styled text clips on a Subtitles overlay track —
 works out of the box in the Flatpak, which bundles a `whisper-cli`
