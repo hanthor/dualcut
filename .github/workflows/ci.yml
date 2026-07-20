@@ -18,6 +18,11 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Schema/types in sync with the bundled agent skill (#49)
+        run: |
+          diff -q engine/schema/dualcut.d.ts skills/dualcut/references/dualcut.d.ts
+          diff -q engine/schema/dualcut.schema.json skills/dualcut/references/dualcut.schema.json
+
       - name: Install toolchain + runtime
         run: |
           dnf install -y -q cargo rust clippy clang-devel pkgconf-pkg-config \

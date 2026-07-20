@@ -10,10 +10,9 @@ stay in sync: the GNOME app (timeline + inspector), the project file on
 disk, and a local HTTP API. You can use any of them; the app hot-reloads
 external edits live.
 
-This skill lives in the dualcut repo, so it always matches the checked-out
-version. Deep reference: [AGENTS.md](../../AGENTS.md) ·
-types: [engine/schema/dualcut.d.ts](../../engine/schema/dualcut.d.ts) ·
-JSON Schema: [engine/schema/dualcut.schema.json](../../engine/schema/dualcut.schema.json).
+This skill is self-contained (works installed anywhere, not just inside a
+checkout of the repo). Types: [references/dualcut.d.ts](references/dualcut.d.ts) ·
+JSON Schema: [references/dualcut.schema.json](references/dualcut.schema.json).
 
 ## Setup
 

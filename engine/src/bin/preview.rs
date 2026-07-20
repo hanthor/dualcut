@@ -2472,16 +2472,42 @@ fn skill_source_dir() -> Option<PathBuf> {
         .find(|p| p.join("SKILL.md").exists())
 }
 
+fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)?.flatten() {
+        let path = entry.path();
+        let target = dest.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
+}
+
 fn install_skill_to(target_root: &std::path::Path) -> Result<PathBuf> {
     let src = skill_source_dir().context("bundled skill files not found")?;
     let dest = target_root.join("dualcut");
-    std::fs::create_dir_all(&dest)?;
-    for entry in std::fs::read_dir(&src)?.flatten() {
-        if entry.path().is_file() {
-            std::fs::copy(entry.path(), dest.join(entry.file_name()))?;
-        }
-    }
+    // references/ (schema + types) travels with the skill so it stays
+    // self-contained wherever it's installed (#49).
+    copy_dir_recursive(&src, &dest)?;
+    prefs_set("skill_install_dir", &target_root.display().to_string());
     Ok(dest)
+}
+
+/// Bundled skill differs from what's installed at the recorded location
+/// (#49) -- returns the install root (parent of the `dualcut/` skill dir)
+/// to reinstall to, if an update is available.
+fn skill_update_available() -> Option<PathBuf> {
+    let target_root = std::fs::read_to_string(prefs_file()).ok().and_then(|s| {
+        s.lines().find_map(|l| l.trim().strip_prefix("skill_install_dir=").map(PathBuf::from))
+    })?;
+    let src = skill_source_dir()?;
+    let bundled = std::fs::read_to_string(src.join("SKILL.md")).ok()?;
+    let installed =
+        std::fs::read_to_string(target_root.join("dualcut").join("SKILL.md")).ok()?;
+    (bundled != installed).then_some(target_root)
 }
 
 fn show_skills_dialog(editor: &Rc<Editor>, window: Option<&gtk::Window>) {
@@ -3818,8 +3844,24 @@ fn build_ui(app: &adw::Application) -> Result<()> {
     vpaned.set_shrink_start_child(false);
     vpaned.set_shrink_end_child(false);
     vpaned.set_position(520);
+    let skill_banner = adw::Banner::new(
+        "A newer dualcut agent skill is bundled with this app version",
+    );
+    skill_banner.set_button_label(Some("Update"));
+    if let Some(target_root) = skill_update_available() {
+        skill_banner.set_revealed(true);
+        skill_banner.connect_button_clicked(move |b| match install_skill_to(&target_root) {
+            Ok(dest) => {
+                println!("skill updated at {}", dest.display());
+                b.set_revealed(false);
+            }
+            Err(e) => eprintln!("skill update failed: {e:#}"),
+        });
+    }
+
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.append(&bar);
+    content.append(&skill_banner);
     content.append(&vpaned);
     let toasts = adw::ToastOverlay::new();
     toasts.set_child(Some(&content));
