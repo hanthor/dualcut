@@ -100,6 +100,22 @@ so they work with any project, not just ones started this way.
 
 ![Shorts mode](guide/shorts-mode.png)
 
+## Keyboard shortcuts
+
+Space plays/pauses, Left/Right steps one frame, Home/End jumps to the
+start/end, S splits the selected clip at the playhead, Delete ripple-deletes
+it, and Ctrl+Z/Ctrl+Shift+Z undo/redo. The hamburger menu's *Keyboard
+Shortcuts* opens a reference showing whatever is currently bound — see
+below.
+
+Every shortcut is rebindable in *Preferences → Keyboard Shortcuts*: click
+any shortcut and press the new key combo, or pick a **preset** to match the
+muscle memory from another editor (Adobe Premiere Pro, DaVinci Resolve,
+Final Cut Pro, or iMovie) in one click. Presets only remap the actions
+dualcut actually has — where an app's shortcut assumes a feature dualcut
+doesn't have (e.g. iMovie has no dedicated go-to-start/end key), that
+action keeps dualcut's own default instead of going unbound.
+
 ## Menu
 
 The hamburger menu holds *New Project*, *New Vertical Project (9:16)*,
