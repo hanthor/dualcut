@@ -253,6 +253,16 @@ fn take_agent_marker(project_path: &std::path::Path) -> Option<(EditSource, Stri
 }
 
 fn compile_project(project: &Project, base_dir: &std::path::Path) -> Result<ges::Timeline> {
+    Ok(compile_project_with_warnings(project, base_dir)?.0)
+}
+
+/// As [`compile_project`], but also returns compile warnings so callers
+/// with a live `editor` can surface them instead of leaving them only in
+/// `eprintln!` output the user never sees (#57).
+fn compile_project_with_warnings(
+    project: &Project,
+    base_dir: &std::path::Path,
+) -> Result<(ges::Timeline, Vec<String>)> {
     // Preview pipelines render at reduced resolution (Preferences) and
     // read proxy media where available; exports go through render_project
     // at full quality from the original sources.
@@ -265,7 +275,7 @@ fn compile_project(project: &Project, base_dir: &std::path::Path) -> Result<ges:
     for warning in &compiled.warnings {
         eprintln!("warning: {warning}");
     }
-    Ok(compiled.timeline)
+    Ok((compiled.timeline, compiled.warnings))
 }
 
 fn seek_to(pipeline: &ges::Pipeline, secs: f64) {
@@ -394,7 +404,14 @@ impl Editor {
                 if let Some(ui) = self.ui.borrow().as_ref() {
                     ui.picture.set_paintable(Some(&paintable));
                 }
-                let _ = start_paused(&pipeline);
+                // Previously discarded (#57): a failed preroll left the
+                // pipeline stuck in Null with no user-visible signal --
+                // black preview, stuck timestamp, play button that
+                // toggled its icon without anything actually playing.
+                if let Err(e) = start_paused(&pipeline) {
+                    eprintln!("pipeline preroll failed: {e:#}");
+                    self.toast("Preview failed to load -- check the terminal for details");
+                }
                 seek_to(&pipeline, pos);
                 self.state.borrow_mut().pipeline = pipeline;
             }
@@ -403,8 +420,9 @@ impl Editor {
     }
 
     fn rebuild_in_memory(self: &Rc<Self>, project: Project) {
-        match compile_project(&project, &self.base_dir()) {
-            Ok(timeline) => {
+        match compile_project_with_warnings(&project, &self.base_dir()) {
+            Ok((timeline, warnings)) => {
+                self.toast_compile_warnings(&warnings);
                 self.swap_pipeline(&timeline);
                 self.state.borrow_mut().project = Some(project);
                 self.rebuild_strip();
@@ -502,6 +520,22 @@ impl Editor {
         let toast = adw::Toast::new(message);
         toast.set_timeout(5);
         ui.toasts.add_toast(toast);
+    }
+
+    /// Surface compile warnings that were previously only visible in
+    /// `eprintln!` output the user never sees (#57) -- e.g. a clip skipped
+    /// because it needs a feature this build lacks, or an effect that
+    /// failed to apply.
+    fn toast_compile_warnings(&self, warnings: &[String]) {
+        match warnings {
+            [] => {}
+            [one] => self.toast(&format!("⚠ {one}")),
+            many => self.toast(&format!(
+                "⚠ {} compile warnings (first: {}) -- see terminal",
+                many.len(),
+                many[0]
+            )),
+        }
     }
 
     fn window(&self) -> Option<gtk::Window> {
@@ -623,8 +657,11 @@ impl Editor {
             (st.project.clone(), self.base_dir())
         };
         let Some(project) = project else { return };
-        match compile_project(&project, &base_dir).and_then(|tl| make_pipeline(&tl)) {
-            Ok((pipeline, paintable)) => {
+        match compile_project_with_warnings(&project, &base_dir)
+            .and_then(|(tl, warnings)| Ok((make_pipeline(&tl)?, warnings)))
+        {
+            Ok(((pipeline, paintable), warnings)) => {
+                self.toast_compile_warnings(&warnings);
                 {
                     let ui = self.ui.borrow();
                     let Some(ui) = ui.as_ref() else { return };
@@ -642,11 +679,22 @@ impl Editor {
                         st.duration = duration;
                     }
                     ui.seek.set_range(0.0, duration.max(0.1));
-                    let st = self.state.borrow();
-                    let _ = start_paused(&st.pipeline);
-                    if let Some(pos) = old_pos {
-                        let max = gst::ClockTime::from_useconds((duration * 1e6) as u64);
-                        seek_to(&st.pipeline, (pos.min(max)).nseconds() as f64 / 1e9);
+                    // Previously discarded (#57): a failed preroll left the
+                    // pipeline stuck in Null with no user-visible signal --
+                    // black preview, stuck timestamp, play button that
+                    // toggled its icon without anything actually playing.
+                    let preroll_err = {
+                        let st = self.state.borrow();
+                        let result = start_paused(&st.pipeline);
+                        if let Some(pos) = old_pos {
+                            let max = gst::ClockTime::from_useconds((duration * 1e6) as u64);
+                            seek_to(&st.pipeline, (pos.min(max)).nseconds() as f64 / 1e9);
+                        }
+                        result.err()
+                    };
+                    if let Some(e) = preroll_err {
+                        eprintln!("pipeline preroll failed: {e:#}");
+                        self.toast("Preview failed to load -- check the terminal for details");
                     }
                 }
                 self.rebuild_strip();
@@ -3862,12 +3910,24 @@ fn build_ui(app: &adw::Application) -> Result<()> {
             let pipeline = editor.state.borrow().pipeline.clone();
             let playing = pipeline.current_state() == gst::State::Playing;
             let next = if playing { gst::State::Paused } else { gst::State::Playing };
-            let _ = pipeline.set_state(next);
-            btn.set_icon_name(if playing {
-                "media-playback-start-symbolic"
-            } else {
-                "media-playback-pause-symbolic"
-            });
+            // Only flip the icon (and thus the perceived play/pause state)
+            // if the transition actually succeeds -- previously this ran
+            // unconditionally, so a failed set_state (bad proxy, missing
+            // plugin, etc.) left playback silently dead while the button
+            // kept toggling as if it worked (#57).
+            match pipeline.set_state(next) {
+                Ok(_) => {
+                    btn.set_icon_name(if playing {
+                        "media-playback-start-symbolic"
+                    } else {
+                        "media-playback-pause-symbolic"
+                    });
+                }
+                Err(e) => {
+                    eprintln!("playback: set_state({next:?}) failed: {e}");
+                    editor.toast("Playback failed to start -- check the terminal for details");
+                }
+            }
         });
     }
     {
@@ -4486,12 +4546,21 @@ fn build_ui(app: &adw::Application) -> Result<()> {
                     gtk::gdk::Key::space => {
                         let playing = pipeline.current_state() == gst::State::Playing;
                         let next = if playing { gst::State::Paused } else { gst::State::Playing };
-                        let _ = pipeline.set_state(next);
-                        play_btn.set_icon_name(if playing {
-                            "media-playback-start-symbolic"
-                        } else {
-                            "media-playback-pause-symbolic"
-                        });
+                        // Same fix as the play button (#57): only flip the
+                        // icon if the transition actually succeeded.
+                        match pipeline.set_state(next) {
+                            Ok(_) => {
+                                play_btn.set_icon_name(if playing {
+                                    "media-playback-start-symbolic"
+                                } else {
+                                    "media-playback-pause-symbolic"
+                                });
+                            }
+                            Err(e) => {
+                                eprintln!("playback: set_state({next:?}) failed: {e}");
+                                editor.toast("Playback failed to start -- check the terminal for details");
+                            }
+                        }
                         return glib::Propagation::Stop;
                     }
                     gtk::gdk::Key::Left | gtk::gdk::Key::Right => {
