@@ -958,4 +958,326 @@ mod tests {
             result.err()
         );
     }
+
+    // ---- pure helpers: no GStreamer/GES init needed at all ----
+
+    #[test]
+    fn normalize_clamps_alpha_but_not_arbitrary_properties() {
+        assert_eq!(normalize("alpha", 1.5), 1.0);
+        assert_eq!(normalize("alpha", -0.5), 0.0);
+        assert_eq!(normalize("alpha", 0.5), 0.5);
+        assert_eq!(normalize("volume", -1.0), 0.0);
+        assert_eq!(normalize("volume", 2.0), 2.0);
+        assert_eq!(normalize("posx", -500.0), -500.0);
+    }
+
+    #[test]
+    fn ease_endpoints_are_identity_for_every_curve() {
+        for easing in [Easing::Linear, Easing::EaseIn, Easing::EaseOut, Easing::EaseInOut] {
+            assert!((ease(easing, 0.0) - 0.0).abs() < 1e-9, "{easing:?} at t=0");
+            assert!((ease(easing, 1.0) - 1.0).abs() < 1e-9, "{easing:?} at t=1");
+        }
+    }
+
+    #[test]
+    fn ease_linear_is_the_identity_function() {
+        for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            assert!((ease(Easing::Linear, t) - t).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn substitute_replaces_placeholders_in_text_fields() {
+        let clip = Clip {
+            id: "tpl".into(),
+            start: 0.0,
+            duration: 1.0,
+            element: Element::Text {
+                text: "Hello {name}!".into(),
+                font: "{font_name} 20".into(),
+                color: "{color}".into(),
+                align: None,
+                outline: Some("{outline}".into()),
+                shadow: false,
+            },
+            transform: Default::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        };
+        let mut args = BTreeMap::new();
+        args.insert("name".to_string(), "World".to_string());
+        args.insert("font_name".to_string(), "Sans Bold".to_string());
+        args.insert("color".to_string(), "#ffffff".to_string());
+        args.insert("outline".to_string(), "#000000".to_string());
+        let result = substitute(&clip, &args);
+        match result.element {
+            Element::Text { text, font, color, outline, .. } => {
+                assert_eq!(text, "Hello World!");
+                assert_eq!(font, "Sans Bold 20");
+                assert_eq!(color, "#ffffff");
+                assert_eq!(outline.as_deref(), Some("#000000"));
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn substitute_replaces_video_src() {
+        let clip = Clip {
+            id: "v".into(),
+            start: 0.0,
+            duration: 1.0,
+            element: Element::Video { src: "{clip}".into(), offset: 0.0, volume: 1.0, rate: 1.0 },
+            transform: Default::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        };
+        let mut args = BTreeMap::new();
+        args.insert("clip".to_string(), "footage.mp4".to_string());
+        match substitute(&clip, &args).element {
+            Element::Video { src, .. } => assert_eq!(src, "footage.mp4"),
+            other => panic!("expected video, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn substitute_leaves_unmatched_placeholders_untouched() {
+        let clip = Clip {
+            id: "t".into(),
+            start: 0.0,
+            duration: 1.0,
+            element: Element::Text {
+                text: "{missing}".into(),
+                font: "Sans 20".into(),
+                color: "#fff".into(),
+                align: None,
+                outline: None,
+                shadow: false,
+            },
+            transform: Default::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        };
+        match substitute(&clip, &BTreeMap::new()).element {
+            Element::Text { text, .. } => assert_eq!(text, "{missing}"),
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clip_slot_depth_is_one_for_ordinary_clips() {
+        let project = minimal_project();
+        let clip = Clip {
+            id: "c".into(),
+            start: 0.0,
+            duration: 1.0,
+            element: Element::Test {},
+            transform: Default::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        };
+        assert_eq!(clip_slot_depth(&project, &clip), 1);
+    }
+
+    #[test]
+    fn clip_slot_depth_sums_a_multi_layer_defs_own_depths() {
+        let mut project = minimal_project();
+        project.defs.insert(
+            "two-layers".into(),
+            crate::document::CompDef {
+                params: Vec::new(),
+                layers: vec![
+                    Clip {
+                        id: "a".into(),
+                        start: 0.0,
+                        duration: 1.0,
+                        element: Element::Test {},
+                        transform: Default::default(),
+                        animations: Vec::new(),
+                        effects: Vec::new(),
+                    },
+                    Clip {
+                        id: "b".into(),
+                        start: 0.0,
+                        duration: 1.0,
+                        element: Element::Test {},
+                        transform: Default::default(),
+                        animations: Vec::new(),
+                        effects: Vec::new(),
+                    },
+                ],
+            },
+        );
+        let clip = Clip {
+            id: "inst".into(),
+            start: 0.0,
+            duration: 1.0,
+            element: Element::CompRef { r#ref: "two-layers".into(), args: Default::default() },
+            transform: Default::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        };
+        assert_eq!(clip_slot_depth(&project, &clip), 2);
+    }
+
+    // ---- real compiles: exercise the actual GES timeline builder ----
+
+    fn minimal_project() -> Project {
+        Project {
+            meta: Meta { title: "t".into(), width: 320, height: 180, fps: 25 },
+            library: Vec::new(),
+            defs: Default::default(),
+            scenes: vec![Scene {
+                id: "s1".into(),
+                name: String::new(),
+                duration: 1.0,
+                transition: None,
+                layers: Vec::new(),
+            }],
+            overlays: Vec::new(),
+            scene_lanes: Vec::new(),
+        }
+    }
+
+    fn test_clip(id: &str, start: f64, duration: f64) -> Clip {
+        Clip {
+            id: id.into(),
+            start,
+            duration,
+            element: Element::Test {},
+            transform: Default::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn overlay_clips_use_absolute_timing_not_scene_relative() {
+        crate::init().ok();
+        let mut project = minimal_project();
+        project.scenes[0].duration = 2.0;
+        project.scenes.push(Scene {
+            id: "s2".into(),
+            name: String::new(),
+            duration: 2.0,
+            transition: None,
+            layers: Vec::new(),
+        });
+        // An overlay clip starting at t=3 should land in the second scene's
+        // span (offset 2.0) regardless of per-scene offsets -- overlays are
+        // absolute, unlike scene layers.
+        project.overlays.push(crate::document::OverlayTrack {
+            id: "ov".into(),
+            muted: false,
+            hidden: false,
+            locked: false,
+            name: "Overlay".into(),
+            clips: vec![test_clip("abs", 3.0, 1.0)],
+        });
+        let compiled = compile(&project, std::path::Path::new(".")).expect("compiles");
+        let found = compiled.timeline.layers().iter().any(|l| {
+            l.clips().iter().any(|c| (c.start().nseconds() as f64 / 1e9 - 3.0).abs() < 0.01)
+        });
+        assert!(found, "expected a clip at absolute t=3.0 on some layer");
+    }
+
+    #[test]
+    fn compref_instantiates_every_def_layer() {
+        crate::init().ok();
+        let mut project = minimal_project();
+        project.defs.insert(
+            "pair".into(),
+            crate::document::CompDef {
+                params: Vec::new(),
+                layers: vec![test_clip("top", 0.0, 1.0), test_clip("bottom", 0.0, 1.0)],
+            },
+        );
+        project.scenes[0].layers.push(Clip {
+            id: "inst".into(),
+            start: 0.0,
+            duration: 1.0,
+            element: Element::CompRef { r#ref: "pair".into(), args: Default::default() },
+            transform: Default::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        });
+        let compiled = compile(&project, std::path::Path::new(".")).expect("compiles");
+        let total_clips: usize =
+            compiled.timeline.layers().iter().map(|l| l.clips().len()).sum();
+        // Both def layers should have landed somewhere in the timeline.
+        assert!(total_clips >= 2, "expected at least 2 clips from a 2-layer def, got {total_clips}");
+    }
+
+    #[test]
+    fn wipe_transition_compiles_and_retypes_the_auto_transition() {
+        crate::init().ok();
+        let mut project = minimal_project();
+        project.scenes[0].duration = 2.0;
+        project.scenes[0].layers.push(test_clip("a", 0.0, 2.0));
+        project.scenes.push(Scene {
+            id: "s2".into(),
+            name: String::new(),
+            duration: 2.0,
+            transition: Some(crate::document::Transition {
+                kind: crate::document::TransitionKind::WipeLr,
+                duration: 0.5,
+            }),
+            layers: vec![test_clip("b", 0.0, 2.0)],
+        });
+        // Should compile without error; retype_transitions runs internally
+        // and must not panic on a real timeline with an overlapping pair.
+        let compiled = compile(&project, std::path::Path::new(".")).expect("compiles");
+        assert!(!compiled.timeline.layers().is_empty());
+    }
+
+    #[test]
+    fn every_video_effect_kind_attaches_without_a_compile_error() {
+        crate::init().ok();
+        let mut project = minimal_project();
+        let mut clip = test_clip("fx", 0.0, 1.0);
+        clip.effects = vec![
+            crate::document::Effect::Blur { amount: 5.0 },
+            crate::document::Effect::ChromaKey { color: "#00ff00".into(), angle: 20.0, noise: 2.0 },
+            crate::document::Effect::Crop { left: 1, right: 1, top: 1, bottom: 1 },
+            crate::document::Effect::Color {
+                brightness: 0.1,
+                contrast: 1.1,
+                saturation: 1.0,
+                hue: 0.0,
+            },
+        ];
+        project.scenes[0].layers.push(clip);
+        let compiled = compile(&project, std::path::Path::new(".")).expect("compiles");
+        assert!(
+            compiled.warnings.iter().all(|w| !w.contains("not added") && !w.contains("unavailable")),
+            "unexpected effect warnings: {:?}",
+            compiled.warnings
+        );
+    }
+
+    #[test]
+    fn keyframed_opacity_animation_compiles_without_warnings() {
+        crate::init().ok();
+        let mut project = minimal_project();
+        let mut clip = test_clip("anim", 0.0, 2.0);
+        clip.animations.push(crate::document::Anim {
+            property: crate::document::AnimProperty::Opacity,
+            from: 0.0,
+            to: 0.0,
+            start: 0.0,
+            end: 0.0,
+            easing: Easing::Linear,
+            keyframes: vec![
+                crate::document::Keyframe { t: 0.0, value: 0.0, easing: Easing::EaseOut },
+                crate::document::Keyframe { t: 1.0, value: 1.0, easing: Easing::Linear },
+            ],
+        });
+        project.scenes[0].layers.push(clip);
+        let compiled = compile(&project, std::path::Path::new(".")).expect("compiles");
+        assert!(
+            compiled.warnings.iter().all(|w| !w.contains("animations on")),
+            "unexpected animation warnings: {:?}",
+            compiled.warnings
+        );
+    }
 }

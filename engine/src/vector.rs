@@ -307,3 +307,163 @@ pub fn shape_png_maybe_inverted(
     img.save(&file).with_context(|| format!("saving {}", file.display()))?;
     Ok(file)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every test skips cleanly (rather than failing) if this host has no
+    /// usable Vulkan/GPU adapter -- `gpu()` returning `None` is a real,
+    /// already-handled outcome (`render_shape_rgba` turns it into a
+    /// contextualized `Err`, not a panic), not something these tests exist
+    /// to re-litigate. What they actually check is the raster's *content*
+    /// once rendering succeeds.
+    macro_rules! skip_if_no_gpu {
+        ($result:expr) => {
+            match $result {
+                Ok(v) => v,
+                Err(e) if e.to_string().contains("no GPU") => {
+                    eprintln!("skipping: {e}");
+                    return;
+                }
+                Err(e) => panic!("unexpected error: {e:#}"),
+            }
+        };
+    }
+
+    fn tmp_cache(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("dualcut-vector-test-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn shape_png_has_the_requested_dimensions() {
+        let cache = tmp_cache("dims");
+        let path = skip_if_no_gpu!(shape_png(&cache, ShapeKind::Rect, "#ff0000", 64, 32));
+        let img = image::open(&path).expect("valid png").to_rgba8();
+        assert_eq!((img.width(), img.height()), (64, 32));
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn rect_shape_fills_the_whole_canvas_opaquely() {
+        let cache = tmp_cache("rect-fill");
+        let path = skip_if_no_gpu!(shape_png(&cache, ShapeKind::Rect, "#ff0000", 40, 40));
+        let img = image::open(&path).expect("valid png").to_rgba8();
+        // A rect shape has no margin, so even a corner pixel should be
+        // opaque and roughly the requested red.
+        let px = img.get_pixel(1, 1);
+        assert!(px[3] > 200, "corner should be opaque, got alpha={}", px[3]);
+        assert!(px[0] > 150 && px[1] < 100, "corner should be reddish, got {px:?}");
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn circle_shape_is_transparent_outside_the_circle() {
+        let cache = tmp_cache("circle-corner");
+        let path = skip_if_no_gpu!(shape_png(&cache, ShapeKind::Circle, "#00ff00", 60, 60));
+        let img = image::open(&path).expect("valid png").to_rgba8();
+        // A circle inscribed in a square canvas never reaches the
+        // corners -- unlike Rect, this actually distinguishes shape logic
+        // from "the whole canvas is painted."
+        let corner = img.get_pixel(1, 1);
+        let center = img.get_pixel(30, 30);
+        assert_eq!(corner[3], 0, "corner outside a circle should be fully transparent");
+        assert!(center[3] > 200, "center inside a circle should be opaque");
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn invert_swaps_painted_and_unpainted_regions() {
+        let cache = tmp_cache("invert");
+        let normal = skip_if_no_gpu!(shape_png_maybe_inverted(
+            &cache,
+            ShapeKind::Circle,
+            "#0000ff",
+            60,
+            60,
+            0.0,
+            false
+        ));
+        let inverted = skip_if_no_gpu!(shape_png_maybe_inverted(
+            &cache,
+            ShapeKind::Circle,
+            "#0000ff",
+            60,
+            60,
+            0.0,
+            true
+        ));
+        let normal = image::open(&normal).expect("valid png").to_rgba8();
+        let inverted = image::open(&inverted).expect("valid png").to_rgba8();
+        // Center (inside the circle): opaque normally, transparent inverted.
+        assert!(normal.get_pixel(30, 30)[3] > 200);
+        assert_eq!(inverted.get_pixel(30, 30)[3], 0);
+        // Corner (outside the circle): transparent normally, opaque inverted.
+        assert_eq!(normal.get_pixel(1, 1)[3], 0);
+        assert!(inverted.get_pixel(1, 1)[3] > 200);
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn feathering_softens_the_edge_instead_of_a_hard_cutoff() {
+        let cache = tmp_cache("feather");
+        let sharp = skip_if_no_gpu!(shape_png_maybe_inverted(
+            &cache,
+            ShapeKind::Circle,
+            "#ffffff",
+            80,
+            80,
+            0.0,
+            false
+        ));
+        let soft = skip_if_no_gpu!(shape_png_maybe_inverted(
+            &cache,
+            ShapeKind::Circle,
+            "#ffffff",
+            80,
+            80,
+            8.0,
+            false
+        ));
+        let sharp = image::open(&sharp).expect("valid png").to_rgba8();
+        let soft = image::open(&soft).expect("valid png").to_rgba8();
+        // Scan outward from the center along one row; the feathered
+        // version's alpha should fall off gradually (more intermediate
+        // values near the edge) rather than jumping straight from opaque
+        // to zero like the unfeathered raster.
+        let row = 40;
+        let sharp_intermediate =
+            (0..80).filter(|&x| { let a = sharp.get_pixel(x, row)[3]; a > 10 && a < 245 }).count();
+        let soft_intermediate =
+            (0..80).filter(|&x| { let a = soft.get_pixel(x, row)[3]; a > 10 && a < 245 }).count();
+        assert!(
+            soft_intermediate > sharp_intermediate,
+            "feathered edge should have more intermediate-alpha pixels: sharp={sharp_intermediate} soft={soft_intermediate}"
+        );
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn results_are_cached_by_content_not_regenerated() {
+        let cache = tmp_cache("cache");
+        let first = skip_if_no_gpu!(shape_png(&cache, ShapeKind::Star, "#123456", 32, 32));
+        let mtime1 = std::fs::metadata(&first).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let second = skip_if_no_gpu!(shape_png(&cache, ShapeKind::Star, "#123456", 32, 32));
+        let mtime2 = std::fs::metadata(&second).unwrap().modified().unwrap();
+        assert_eq!(first, second, "identical params should reuse the same cache path");
+        assert_eq!(mtime1, mtime2, "second call should not have rewritten the file");
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn different_shapes_produce_different_cache_files() {
+        let cache = tmp_cache("distinct");
+        let rect = skip_if_no_gpu!(shape_png(&cache, ShapeKind::Rect, "#ffffff", 32, 32));
+        let circle = skip_if_no_gpu!(shape_png(&cache, ShapeKind::Circle, "#ffffff", 32, 32));
+        assert_ne!(rect, circle);
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+}
