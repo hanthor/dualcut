@@ -291,20 +291,28 @@ fn add_clip(
         }
         Element::Video { src, offset: inpoint, volume, rate }
         | Element::Audio { src, offset: inpoint, volume, rate } => {
-            let uri = to_uri(src, base_dir)?;
-            // Probe before ever handing this URI to GES (see
-            // probe_discoverable's doc comment) -- an undecodable file
-            // here isn't a normal error GES reports, it's a process
-            // abort, so this clip is skipped with a warning instead of
-            // risking the crash.
-            if !probe_discoverable(&uri) {
-                warnings.push(format!(
-                    "clip {:?}: {src:?} isn't decodable on this GStreamer install (missing \
-                     plugin or unsupported codec profile) -- skipped",
-                    clip.id
-                ));
+            // A missing file or an undecodable one are both skipped with
+            // a warning, not a hard error: one bad clip anywhere in the
+            // project used to fail the *entire* compile (`to_uri`'s `?`
+            // propagated straight through), which is exactly the kind of
+            // total, silent-looking preview failure #57 describes -- a
+            // single moved/renamed file shouldn't take the whole preview
+            // down. Probing (see probe_discoverable's doc comment) still
+            // matters separately: an undecodable file isn't a normal
+            // error GES reports, it's a process abort.
+            let uri = to_uri(src, base_dir);
+            let ok = matches!(&uri, Ok(uri) if probe_discoverable(uri));
+            if !ok {
+                let reason = match &uri {
+                    Err(e) => format!("{e:#}"),
+                    Ok(_) => "isn't decodable on this GStreamer install (missing plugin or \
+                               unsupported codec profile)"
+                        .to_string(),
+                };
+                warnings.push(format!("clip {:?}: {reason} -- skipped", clip.id));
                 None
             } else {
+                let uri = uri.expect("checked Ok above");
                 let media = ges::UriClip::new(&uri).with_context(|| format!("opening {src}"))?;
                 media.set_start(start);
                 media.set_inpoint(secs(*inpoint));
@@ -342,15 +350,22 @@ fn add_clip(
             }
         }
         Element::Image { src } => {
-            let uri = to_uri(src, base_dir)?;
-            if !probe_discoverable(&uri) {
-                warnings.push(format!(
-                    "clip {:?}: {src:?} isn't decodable on this GStreamer install (missing \
-                     plugin or unsupported format) -- skipped",
-                    clip.id
-                ));
+            // Same reasoning as Video/Audio above: missing file or
+            // undecodable format, both skipped with a warning rather than
+            // failing the whole compile.
+            let uri = to_uri(src, base_dir);
+            let ok = matches!(&uri, Ok(uri) if probe_discoverable(uri));
+            if !ok {
+                let reason = match &uri {
+                    Err(e) => format!("{e:#}"),
+                    Ok(_) => "isn't decodable on this GStreamer install (missing plugin or \
+                               unsupported format)"
+                        .to_string(),
+                };
+                warnings.push(format!("clip {:?}: {reason} -- skipped", clip.id));
                 None
             } else {
+                let uri = uri.expect("checked Ok above");
                 let media = ges::UriClip::new(&uri).with_context(|| format!("opening {src}"))?;
                 media.set_start(start);
                 media.set_duration(duration);

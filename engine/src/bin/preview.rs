@@ -656,6 +656,7 @@ fn seek_to(pipeline: &ges::Pipeline, secs: f64) {
     );
 }
 
+
 /// Widgets the controller refreshes when the document changes.
 struct Ui {
     picture: gtk::Picture,
@@ -5359,4 +5360,115 @@ fn build_ui(app: &adw::Application) -> Result<()> {
         glib::idle_add_local_once(move || editor.zoom_to_fit());
     }
     Ok(())
+}
+
+/// Coverage for the failure paths (#57) that used to be silently
+/// discarded with `let _ = ...` at every live-playback call site: the
+/// pipeline/compile plumbing itself is plain functions with no GTK
+/// window needed, so these run under ordinary `cargo test`, not just
+/// manual GUI verification.
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+
+    fn init_once() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            init().expect("gst/ges init");
+            // Real registration path build_ui uses -- make_pipeline needs
+            // "gtk4paintablesink" to exist at all (H4 in #57: what happens
+            // if the sink can't be created is exactly what's untested
+            // without this).
+            gstgtk4::plugin_register_static().expect("registering gtk4paintablesink");
+        });
+    }
+
+    fn empty_project(base_dir: &std::path::Path) -> (Project, PathBuf) {
+        let project = dualcut_engine::templates::new_project("pipeline-test");
+        (project, base_dir.to_path_buf())
+    }
+
+    /// H4: a normal, empty project compiles and its pipeline reaches
+    /// Paused -- the baseline `start_paused` is supposed to hit on every
+    /// healthy edit, so a regression here means *nothing* previews.
+    #[test]
+    fn make_pipeline_and_start_paused_succeed_for_a_normal_project() {
+        init_once();
+        let dir = std::env::temp_dir().join("dualcut-pipeline-test-normal");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (project, base_dir) = empty_project(&dir);
+        let timeline = compile_project(&project, &base_dir).expect("compiles");
+        let (pipeline, _paintable) = make_pipeline(&timeline).expect("pipeline builds");
+        start_paused(&pipeline).expect("a normal empty timeline should preroll cleanly");
+        let _ = pipeline.set_state(gst::State::Null);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// H1/#37 test-table row 3: a project referencing media that doesn't
+    /// exist on disk at all (not just an undecodable codec -- #45 covers
+    /// that) must still compile with a non-empty warning, not error out
+    /// and leave the caller with nothing to show the user.
+    #[test]
+    fn compile_project_with_warnings_reports_missing_media_instead_of_failing() {
+        init_once();
+        let dir = std::env::temp_dir().join("dualcut-pipeline-test-missing");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut project = dualcut_engine::templates::new_project("missing-media-test");
+        project.scenes[0].layers.push(document::Clip {
+            id: "gone".into(),
+            start: 0.0,
+            duration: 1.0,
+            element: document::Element::Video {
+                src: "does-not-exist.mp4".into(),
+                offset: 0.0,
+                volume: 1.0,
+                rate: 1.0,
+            },
+            transform: Default::default(),
+            animations: Vec::new(),
+            effects: Vec::new(),
+        });
+        let result = compile_project_with_warnings(&project, &dir);
+        let (_timeline, warnings) = result.expect("missing media should degrade, not error");
+        assert!(!warnings.is_empty(), "expected a warning about the missing file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Test-table row 4: before a pipeline has ever prerolled,
+    /// `query_position()` must return `None`, not a stale/zero value that
+    /// could be mistaken for a real position -- this is the exact
+    /// condition the stuck "0:00.0" timestamp and missing playhead in the
+    /// bug report trace back to.
+    #[test]
+    fn query_position_is_none_before_preroll() {
+        init_once();
+        let dir = std::env::temp_dir().join("dualcut-pipeline-test-position");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (project, base_dir) = empty_project(&dir);
+        let timeline = compile_project(&project, &base_dir).expect("compiles");
+        let (pipeline, _paintable) = make_pipeline(&timeline).expect("pipeline builds");
+        assert!(
+            pipeline.query_position::<gst::ClockTime>().is_none(),
+            "a never-started pipeline should report no position"
+        );
+        let _ = pipeline.set_state(gst::State::Null);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Test-table row 6: `with_proxies`/proxy-swap compilation must not
+    /// choke when the proxy cache is empty (the common case right after
+    /// opening a project, before the background thumbnail worker has run)
+    /// -- it should fall back to the original media, not fail the whole
+    /// compile.
+    #[test]
+    fn compile_project_works_with_no_proxy_cache_present() {
+        init_once();
+        let dir = std::env::temp_dir().join("dualcut-pipeline-test-noproxy");
+        std::fs::create_dir_all(&dir).unwrap();
+        // No .dualcut-cache directory at all -- proxy_path() checks will
+        // all miss, exercising the "proxies not built yet" fallback.
+        let (project, base_dir) = empty_project(&dir);
+        assert!(compile_project(&project, &base_dir).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
